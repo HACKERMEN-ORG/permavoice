@@ -329,7 +329,7 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
 
                 const embed = new EmbedBuilder()
                     .setTitle("✏️ **Control your temporary channel**")
-                    .setDescription("**Use the following buttons to modify the channel's settings or various slash commands to control how the channel works.\n\nYou can use commands such as:\n\nUtility Commands:\n`/rename`\n`/lock`\n`/private`\n`/bitrate`\n`/trust`\n`/limit`\n`/region`\n`/waitingroom`\n\nModeration Comamnds:\n`/ban`- To ban a user from your channel\n`/unban` - To unban a user from your channel\n`/kick` - Remove a user from the channel without banning\n`/mute` - Mute a user in your channel\n`/unmute` - Unmute a user in your channel\n`/listmuted` - View all muted users\n`/listbanned` - View all banned users\n`/owner` - Change the owner of the channel (requires you to own the said channel.\n\n **")
+                    .setDescription("**✏️ Moderator Commands**/mute - Mute a user in your channel\n/unmute - Unmute a user in your channel\n /kick - Kick a user from the channel\n /ban- Ban a user from your channel\n /unban - Unban a user from your channel\n /listmuted - View all muted users\n/listbanned - View all banned users\n/submod - Add a submoderator to the channel\n/unsubmod - Remove a submoderator from the channel\n/listsubmods - View all submoderators\n\n✏️ Community Commands\n/votemute - Anyone can call a vote to mute a disruptive member")
                     .setColor("#f5cc00")
                     .setTimestamp();
 
@@ -426,7 +426,6 @@ client.on(Events.InteractionCreate, async interaction => {
 	if (!interaction.isChatInputCommand()) return;
 	const command = client.commands.get(interaction.commandName);
 
-	//TODO Add a check for the command to see if it is a button press
 
 	if (!command) {
 		console.error(`No command matching ${interaction.commandName} was found.`);
