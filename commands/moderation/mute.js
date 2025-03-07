@@ -54,18 +54,18 @@ module.exports = {
       const currentPermissions = targetChannel.permissionOverwrites.cache.get(targetUser.id);
       const isMuted = currentPermissions && currentPermissions.deny.has(PermissionFlagsBits.Speak);
 
+      // If user is already muted, inform the user
       if (isMuted) {
-        // If user is currently muted, unmute them
-        await targetChannel.permissionOverwrites.edit(targetUser, { Speak: null });
-        return interaction.reply({ content: `${targetUser.username} has been unmuted in this channel.`, ephemeral: true });
-      } else {
-        // If user is not muted, mute them
-        await targetChannel.permissionOverwrites.edit(targetUser, { Speak: false });
-        return interaction.reply({ content: `${targetUser.username} has been muted in this channel.`, ephemeral: true });
-      }
+        return interaction.reply({ content: `${targetUser.username} is already muted in this channel. Use /roomunmute to unmute them.`, ephemeral: true });
+      } 
+      
+      // Mute the user in this channel
+      await targetChannel.permissionOverwrites.edit(targetUser, { Speak: false });
+      return interaction.reply({ content: `${targetUser.username} has been muted in this channel.`, ephemeral: true });
     } catch (error) {
       console.error('Error muting/unmuting user:', error);
       await interaction.reply({ content: 'There was an error while using the command.', ephemeral: true });
     }
   },
 };
+
