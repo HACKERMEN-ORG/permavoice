@@ -12,19 +12,19 @@ module.exports = {
 				.setDescription('The region for the channel. Leave Empty for default.')
 				.setRequired(false)
 				.addChoices(
-					{ name: 'Brazil', value: 'brazil' },
-          { name: 'Hong Kong', value: 'hongkong' },
-          { name: 'India', value: 'india' },
-          { name: 'Japan', value: 'japan' },
-          { name: 'Rotterdam', value: 'rotterdam' },
-          { name: 'Russia', value: 'russia' },
-          { name: 'Singapore', value: 'singapore' },
-          { name: 'South Africa', value: 'south-africa' },
-          { name: 'Sydney', value: 'sydney' },
-          { name: 'US Central', value: 'us-central' },
-          { name: 'US East', value: 'us-east' },
-          { name: 'US South', value: 'us-south' },
-          { name: 'US West', value: 'us-west' },
+                  { name: 'Brazil', value: 'brazil' },
+                  { name: 'Hong Kong', value: 'hongkong' },
+                  { name: 'India', value: 'india' },
+                  { name: 'Japan', value: 'japan' },
+                  { name: 'Rotterdam', value: 'rotterdam' },
+                  { name: 'Russia', value: 'russia' },
+                  { name: 'Singapore', value: 'singapore' },
+                  { name: 'South Africa', value: 'south-africa' },
+                  { name: 'Sydney', value: 'sydney' },
+                  { name: 'US Central', value: 'us-central' },
+                  { name: 'US East', value: 'us-east' },
+                  { name: 'US South', value: 'us-south' },
+                  { name: 'US West', value: 'us-west' },
 				)),
 async execute(interaction) {
     const guild = interaction.guild
