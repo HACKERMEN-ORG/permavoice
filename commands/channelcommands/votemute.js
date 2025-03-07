@@ -80,13 +80,13 @@ module.exports = {
         return await interaction.editReply({ content: 'There need to be at least 3 people in the channel to start a vote mute.' });
       }
       
-      // Calculate required votes - all eligible voters must vote
-      const requiredVotes = totalEligibleVoters; // All eligible voters must vote
+      // Calculate required votes - CHANGED: now only 50% of eligible voters required (rounded up)
+      const requiredVotes = Math.ceil(totalEligibleVoters / 2);
       
       // Create vote embed
       const voteEmbed = new EmbedBuilder()
         .setTitle('Vote Mute')
-        .setDescription(`${requiredVotes + 1} votes required to mute ${targetUser.toString()}\nVote ends in 15 seconds`)
+        .setDescription(`${requiredVotes}/${totalEligibleVoters} votes required to mute ${targetUser.toString()}\nVote ends in 15 seconds`)
         .setColor('#FF0000')
         .setFooter({ text: 'React with 👍 to vote' })
         .setTimestamp();
@@ -143,28 +143,21 @@ module.exports = {
         const currentVoiceMembers = freshVoiceChannel?.members || new Map();
         const currentEligibleVoters = currentVoiceMembers.filter(m => m.id !== targetUser.id).size;
         
-        // Get total reaction count (including bot's reaction)
-        const totalReactionCount = reaction ? reaction.count : 1;
+        // Recalculate required votes if people left
+        const currentRequiredVotes = Math.ceil(currentEligibleVoters / 2);
         
-        // For display purposes, use the totalReactionCount
-        const displayVoteCount = totalReactionCount;
-        const displayRequiredVotes = requiredVotes + 1; // Add 1 to include bot's vote
+        // For display purposes
+        const displayVoteCount = validVotes;
         
         // Update the embed with current vote count
-        voteEmbed.setDescription(`${displayVoteCount}/${displayRequiredVotes} votes to mute ${targetUser.toString()}`);
+        voteEmbed.setDescription(`${displayVoteCount}/${currentEligibleVoters} votes to mute ${targetUser.toString()} (need ${currentRequiredVotes})`);
         await fetchedMessage.edit({ embeds: [voteEmbed] });
         
-        console.log(`Updated embed - Valid Votes: ${validVotes}/${requiredVotes}, Display: ${displayVoteCount}/${displayRequiredVotes}, Reactions: ${totalReactionCount}`);
+        console.log(`Updated embed - Valid Votes: ${validVotes}/${currentRequiredVotes}, Display: ${displayVoteCount}/${currentEligibleVoters}`);
         
-        // End vote if all eligible voters have voted
-        if (validVotes === currentEligibleVoters) {
-          console.log(`All eligible voters (${validVotes}/${currentEligibleVoters}) have voted. Ending poll.`);
-          collector.stop('all-votes-received');
-        }
-        
-        // Also end vote if we meet the required threshold
-        if (validVotes >= requiredVotes) {
-          console.log(`Required votes met: ${validVotes}/${requiredVotes}. Stopping collector from updateEmbed.`);
+        // End vote if we meet the required threshold
+        if (validVotes >= currentRequiredVotes) {
+          console.log(`Required votes met: ${validVotes}/${currentRequiredVotes}. Stopping collector from updateEmbed.`);
           collector.stop('success');
         }
       }
@@ -178,12 +171,20 @@ module.exports = {
             // Count valid votes
             const validVotes = await countValidVotes(reaction);
             
+            // Get fresh data about who's in the voice channel
+            const freshVoiceChannel = guild.channels.cache.get(currentChannel);
+            const currentVoiceMembers = freshVoiceChannel?.members || new Map();
+            const currentEligibleVoters = currentVoiceMembers.filter(m => m.id !== targetUser.id).size;
+            
+            // Recalculate required votes if people left
+            const currentRequiredVotes = Math.ceil(currentEligibleVoters / 2);
+            
             // Update the embed
             await updateEmbed(validVotes, reaction);
             
             // If we have enough votes, end the vote immediately
-            if (validVotes >= requiredVotes) {
-              console.log(`Required votes met: ${validVotes}/${requiredVotes}. Stopping collector.`);
+            if (validVotes >= currentRequiredVotes) {
+              console.log(`Required votes met: ${validVotes}/${currentRequiredVotes}. Stopping collector.`);
               collector.stop('success');
             }
           } catch (error) {
@@ -216,6 +217,7 @@ module.exports = {
         
         let finalVotes = 0;
         let finalEligibleVoters = 0;
+        let finalRequiredVotes = 0;
         
         try {
           // Get fresh data
@@ -231,20 +233,16 @@ module.exports = {
             if (freshVoiceChannel) {
               const currentVoiceMembers = freshVoiceChannel.members;
               finalEligibleVoters = currentVoiceMembers.filter(m => m.id !== targetUser.id).size;
+              finalRequiredVotes = Math.ceil(finalEligibleVoters / 2);
             }
           }
         } catch (error) {
           console.error('Error getting final vote count:', error);
         }
         
-        if (reason === 'success' || reason === 'all-votes-received' || (reason === 'time' && finalVotes >= requiredVotes)) {
+        if (reason === 'success' || (reason === 'time' && finalVotes >= finalRequiredVotes)) {
           // Vote passed - mute the user
           try {
-            // Get the final reaction count
-            const finalThumbsUpReaction = fetchedMessage.reactions.cache.get('👍');
-            const finalReactionCount = finalThumbsUpReaction ? finalThumbsUpReaction.count : 1;
-            const displayRequiredVotes = requiredVotes + 1; // Add 1 to include bot's vote
-            
             // Update embed to show vote passed
             voteEmbed.setDescription(`Vote passed! ${targetUser.toString()} has been muted for 5 minutes`);
             voteEmbed.setColor('#00FF00');
@@ -297,11 +295,6 @@ module.exports = {
             await fetchedMessage.edit({ embeds: [voteEmbed] });
           }
         } else if (reason === 'time') {
-          // Get the final reaction count
-          const finalThumbsUpReaction = fetchedMessage.reactions.cache.get('👍');
-          const finalReactionCount = finalThumbsUpReaction ? finalThumbsUpReaction.count : 1;
-          const displayRequiredVotes = requiredVotes + 1; // Add 1 to include bot's vote
-          
           // Vote failed due to timeout
           voteEmbed.setDescription(`Vote failed! Not enough votes to mute ${targetUser.toString()}`);
           voteEmbed.setColor('#888888');
