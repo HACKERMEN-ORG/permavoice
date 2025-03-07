@@ -1,4 +1,5 @@
-// methods/channelState.js
+// methods/channelState.js - Updated to include submods tracking
+
 const fs = require('fs');
 const path = require('path');
 const _ = require('lodash');
@@ -8,6 +9,17 @@ const { channelOwners } = require('./channelowner');
 const { togglePrivate } = require('./private');
 const { toggleLock } = require('./locks');
 const { waitingRoom } = require('./waitingRoom');
+
+// Import the submods module if it exists
+let channelSubmods;
+try {
+  const submodModule = require('../commands/channelcommands/submod');
+  channelSubmods = submodModule.channelSubmods;
+} catch (error) {
+  // If the module doesn't exist yet, create an empty map
+  channelSubmods = new Map();
+  console.log('Submods module not found. Creating empty submods collection.');
+}
 
 // File path for data persistence
 const dataFilePath = path.join(__dirname, '../globalserversettings/channelData.json');
@@ -24,11 +36,20 @@ const ensureDirExists = () => {
 const saveChannelData = () => {
   ensureDirExists();
   
+  // Convert Set values to arrays for JSON serialization
+  const submodsData = {};
+  if (channelSubmods) {
+    channelSubmods.forEach((submods, channelId) => {
+      submodsData[channelId] = Array.from(submods);
+    });
+  }
+  
   const data = {
     channelOwners: Object.fromEntries(channelOwners),
     togglePrivate: Object.fromEntries(togglePrivate),
     toggleLock: Object.fromEntries(toggleLock),
     waitingRoom: Object.fromEntries(waitingRoom),
+    channelSubmods: submodsData
   };
   
   fs.writeFileSync(dataFilePath, JSON.stringify(data, null, 2), 'utf8');
@@ -36,7 +57,7 @@ const saveChannelData = () => {
 };
 
 // Create a debounced version to avoid excessive writes
-const debouncedSave = _.debounce(saveChannelData, 5000, { maxWait: 30000 });
+const debouncedSave = _.debounce(saveChannelData, 5000, { 'maxWait': 30000 });
 
 // Load data from file
 const loadChannelData = () => {
@@ -79,6 +100,14 @@ const loadChannelData = () => {
       });
       console.log(`Loaded ${Object.keys(data.waitingRoom).length} waiting rooms`);
     }
+    
+    // Load submods if they exist in the data file
+    if (data.channelSubmods && channelSubmods) {
+      Object.entries(data.channelSubmods).forEach(([channel, submods]) => {
+        channelSubmods.set(channel, new Set(submods));
+      });
+      console.log(`Loaded ${Object.keys(data.channelSubmods).length} channel submods`);
+    }
   } catch (error) {
     console.error('Error loading channel data:', error);
   }
@@ -114,6 +143,11 @@ const validateChannels = async (client) => {
       togglePrivate.delete(channelId);
       toggleLock.delete(channelId);
       waitingRoom.delete(channelId);
+      
+      // Clean up submods data
+      if (channelSubmods && channelSubmods.has(channelId)) {
+        channelSubmods.delete(channelId);
+      }
       
       // Also clean up any mute data for this channel
       const { clearChannelMutes } = require('./channelMutes');
@@ -207,6 +241,23 @@ waitingRoom.delete = function(key) {
   return result;
 };
 
+// Also patch the submods collection if it exists
+if (channelSubmods) {
+  const originalSubmodsSet = channelSubmods.set;
+  channelSubmods.set = function(key, value) {
+    const result = originalSubmodsSet.call(this, key, value);
+    debouncedSave();
+    return result;
+  };
+
+  const originalSubmodsDelete = channelSubmods.delete;
+  channelSubmods.delete = function(key) {
+    const result = originalSubmodsDelete.call(this, key);
+    debouncedSave();
+    return result;
+  };
+}
+
 // Patch process exit handlers to save data
 const setupExitHandlers = () => {
   process.on('SIGINT', () => {
@@ -227,6 +278,3 @@ module.exports = {
   validateChannels,
   setupExitHandlers
 };
-
-
-

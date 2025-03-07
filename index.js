@@ -13,6 +13,21 @@ const Settings  = require('./Settings');
 const channelState = require('./methods/channelState');
 const { isUserMuted, clearChannelMutes, hasExplicitAction, getExplicitAction } = require('./methods/channelMutes');
 
+// Load the submods module
+let channelSubmods, isSubmod, clearChannelSubmods;
+try {
+  const submodModule = require('./commands/channelcommands/submod');
+  channelSubmods = submodModule.channelSubmods;
+  isSubmod = submodModule.isSubmod;
+  clearChannelSubmods = submodModule.clearChannelSubmods;
+} catch (error) {
+  // Create a placeholder if module doesn't exist yet
+  channelSubmods = new Map();
+  isSubmod = () => false;
+  clearChannelSubmods = () => {};
+  console.log('Submods module not found. Creating placeholder.');
+}
+
 const token = process.env.DISCORD_TOKEN;
 const serverID = process.env.SERVERID;
 
@@ -175,16 +190,17 @@ client.on('voiceStateUpdate', (oldState, newState) => {
         const userId = newState.member.id;
         const channelId = newState.channelId;
 
-        // Skip all mute processing for channel owners
-        if (channelOwners.has(channelId) && channelOwners.get(channelId) === userId) {
-            // This is the channel owner - ensure they're always unmuted in their channel
+        // Skip all mute processing for channel owners and submods
+        if ((channelOwners.has(channelId) && channelOwners.get(channelId) === userId) || 
+            isSubmod(channelId, userId)) {
+            // This is the channel owner or a submod - ensure they're always unmuted in their channel
             if (newState.member.voice.serverMute) {
-                console.log(`Channel owner ${userId} is muted in their own channel ${channelId}, unmuting`);
+                console.log(`Channel owner/submod ${userId} is muted in their channel ${channelId}, unmuting`);
                 try {
-                    newState.member.voice.setMute(false, 'Channel owner unmute')
-                        .catch(error => console.error('Error unmuting channel owner:', error));
+                    newState.member.voice.setMute(false, 'Channel owner/submod unmute')
+                        .catch(error => console.error('Error unmuting channel owner/submod:', error));
                 } catch (error) {
-                    console.error('Error in channel owner unmute:', error);
+                    console.error('Error in channel owner/submod unmute:', error);
                 }
             }
             return;
@@ -389,6 +405,11 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
                     waitingRoom.delete(oldChannel.id);
                     channelOwners.delete(oldChannel.id);
                     clearChannelMutes(oldChannel.id);
+                    
+                    // Clear submods data
+                    if (clearChannelSubmods) {
+                        clearChannelSubmods(oldChannel.id);
+                    }
 
                     // Delete the channel
                     oldChannel.delete()
@@ -410,6 +431,11 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
                 // Clean up
                 channelOwners.delete(oldChannel.id);
                 clearChannelMutes(oldChannel.id);
+                
+                // Clear submods data
+                if (clearChannelSubmods) {
+                    clearChannelSubmods(oldChannel.id);
+                }
 
                 // Delete the channel
                 oldChannel.delete()
