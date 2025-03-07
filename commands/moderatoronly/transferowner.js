@@ -37,17 +37,10 @@ module.exports = {
       }
 
     try {
-      if (!targetnew.voice.channel){
-          return interaction.reply({
-            content: 'The channel you are looking for does not exist.', ephemeral: true
-          });
-      }
-      else {
         targetChannel.permissionOverwrites.delete(interaction.user);
         channelOwners.set(currentChannel, target);
         targetChannel.permissionOverwrites.edit(targetnew, { Connect: true, ViewChannel: true, Speak: true, ManageChannels: true });
         await interaction.reply({ content:`Channel ownership has been transferred to <@${target}>.`, ephemeral: true });
-      }
     } catch (error) {
       await interaction.reply({ content:`There was an error while using the command.`, ephemeral: true });
       console.log(error);
