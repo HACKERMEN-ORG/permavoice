@@ -3,6 +3,17 @@ require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 const { getMutedUsers } = require('../../methods/channelMutes');
 
+// Import the submod functions if they exist
+let isSubmod;
+try {
+  const submodModule = require('./submod');
+  isSubmod = submodModule.isSubmod;
+} catch (error) {
+  // Create placeholder function
+  isSubmod = () => false;
+  console.log('Submod module not available for listmuted command.');
+}
+
 module.exports = {
   category: 'channelcommands',
   data: new SlashCommandBuilder()
@@ -23,8 +34,8 @@ module.exports = {
       return interaction.reply({ content: 'You must be in a temporary channel.', ephemeral: true });
     }
 
-    // Check if the user is the owner of the channel
-    if (channelOwners.get(currentChannel) !== member.id) {
+    // Check if the user is the owner of the channel or a submoderator
+    if (channelOwners.get(currentChannel) !== member.id && !isSubmod(currentChannel, member.id)) {
       return interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: true });
     }
 

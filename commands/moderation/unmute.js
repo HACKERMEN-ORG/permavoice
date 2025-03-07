@@ -3,6 +3,17 @@ require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 const { removeMutedUser, isUserMuted } = require('../../methods/channelMutes');
 
+// Import the submod functions if they exist
+let isSubmod;
+try {
+  const submodModule = require('./submod');
+  isSubmod = submodModule.isSubmod;
+} catch (error) {
+  // Create placeholder function
+  isSubmod = () => false;
+  console.log('Submod module not available for unmute command.');
+}
+
 module.exports = {
   category: 'channelcommands',
   data: new SlashCommandBuilder()
@@ -32,8 +43,8 @@ module.exports = {
         return await interaction.editReply({ content: 'You must be in a temporary channel.' });
       }
 
-      // Check if the user is the owner of the channel
-      if (channelOwners.get(currentChannel) !== member.id) {
+      // Check if the user is the owner of the channel or a submoderator
+      if (channelOwners.get(currentChannel) !== member.id && !isSubmod(currentChannel, member.id)) {
         return await interaction.editReply({ content: 'You do not have permission to use this command.' });
       }
 
@@ -55,7 +66,7 @@ module.exports = {
         if (targetMember.voice.channel && targetMember.voice.channel.id === currentChannel) {
           try {
             // Unmute the user in this channel
-            await targetMember.voice.setMute(false, 'Channel owner unmuted user');
+            await targetMember.voice.setMute(false, 'Channel moderation unmuted user');
             console.log(`Successfully unmuted ${targetUser.id} via command`);
           } catch (muteError) {
             console.error('Error unmuting user:', muteError);

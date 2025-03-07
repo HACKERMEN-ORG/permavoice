@@ -3,6 +3,17 @@ require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 const { addMutedUser, isUserMuted } = require('../../methods/channelMutes');
 
+// Import the submod functions if they exist
+let isSubmod;
+try {
+  const submodModule = require('./submod');
+  isSubmod = submodModule.isSubmod;
+} catch (error) {
+  // Create placeholder function
+  isSubmod = () => false;
+  console.log('Submod module not available for mute command.');
+}
+
 module.exports = {
   category: 'channelcommands',
   data: new SlashCommandBuilder()
@@ -32,14 +43,24 @@ module.exports = {
         return await interaction.editReply({ content: 'You must be in a temporary channel.' });
       }
 
-      // Check if the user is the owner of the channel
-      if (channelOwners.get(currentChannel) !== member.id) {
+      // Check if the user is the owner of the channel or a submoderator
+      if (channelOwners.get(currentChannel) !== member.id && !isSubmod(currentChannel, member.id)) {
         return await interaction.editReply({ content: 'You do not have permission to use this command.' });
       }
 
       // Prevent the user from muting themselves
       if (member.id === targetUser.id) {
         return await interaction.editReply({ content: 'You cannot mute yourself.' });
+      }
+
+      // Prevent muting the channel owner
+      if (channelOwners.get(currentChannel) === targetUser.id) {
+        return await interaction.editReply({ content: 'You cannot mute the channel owner.' });
+      }
+
+      // Prevent muting another submoderator (only owner can mute submods)
+      if (isSubmod(currentChannel, targetUser.id) && channelOwners.get(currentChannel) !== member.id) {
+        return await interaction.editReply({ content: 'Submoderators cannot mute other submoderators. Only the channel owner can do that.' });
       }
 
       // Prevent the user from muting the bot
@@ -65,7 +86,7 @@ module.exports = {
         if (targetMember.voice.channel && targetMember.voice.channel.id === currentChannel) {
           try {
             // Mute the user in this channel
-            await targetMember.voice.setMute(true, 'Channel owner muted user');
+            await targetMember.voice.setMute(true, 'Channel moderation muted user');
             console.log(`Successfully muted ${targetUser.id} via command`);
           } catch (muteError) {
             console.error('Error muting user:', muteError);

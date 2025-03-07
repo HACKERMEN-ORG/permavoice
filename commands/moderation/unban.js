@@ -1,6 +1,17 @@
-const { Client, SlashCommandBuilder, PermissionsBitField , ChannelType, GuildChannel } = require('discord.js');
+const { Client, SlashCommandBuilder, PermissionsBitField, ChannelType, GuildChannel } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
+
+// Import the submod functions if they exist
+let isSubmod;
+try {
+  const submodModule = require('../channelcommands/submod');
+  isSubmod = submodModule.isSubmod;
+} catch (error) {
+  // Create placeholder function
+  isSubmod = () => false;
+  console.log('Submod module not available for unban command.');
+}
 
 module.exports = {
   category: 'moderation',
@@ -27,19 +38,19 @@ module.exports = {
         return interaction.reply({ content: 'You must be in a temporary channel.', ephemeral: true });
     }
 
-    //Check if the user is the owner of the channel
-    if (channelOwners.get(currentChannel) !== member.id) {
+    //Check if the user is the owner of the channel or a submoderator
+    if (channelOwners.get(currentChannel) !== member.id && !isSubmod(currentChannel, member.id)) {
         return interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: true });
     }
 
-    //Prevent the user from kicking themselves
+    //Prevent the user from unbanning themselves
     if (member.id === target) {
-        return interaction.reply({ content: 'You cannot kick yourself.', ephemeral: true });
+        return interaction.reply({ content: 'You cannot unban yourself.', ephemeral: true });
     }
 
-    //Prevent the use r from kicking this bot from the channel
+    //Prevent the user from unbanning the bot from the channel
     if (target === interaction.client.user.id) {
-        return interaction.reply({ content: 'You cannot ban me from the channel.', ephemeral: true });
+        return interaction.reply({ content: 'I cannot be banned from the channel.', ephemeral: true });
     }
 
     try {
