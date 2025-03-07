@@ -68,88 +68,199 @@ module.exports = {
         return await interaction.editReply({ content: `${targetUser.username} is already muted in this channel.` });
       }
       
-      // Count users in the voice channel (for determining vote threshold)
+      // Get all members in the voice channel
       const voiceChannel = guild.channels.cache.get(currentChannel);
-      const memberCount = voiceChannel.members.size;
       
-      // Need at least 3 people in the channel for a vote
-      if (memberCount < 3) {
+      // Get all voice members and exclude the target
+      const eligibleVoters = voiceChannel.members.filter(m => m.id !== targetUser.id);
+      const totalEligibleVoters = eligibleVoters.size;
+      
+      // Need at least 3 people in the channel for a vote (including target)
+      if (voiceChannel.members.size < 3) {
         return await interaction.editReply({ content: 'There need to be at least 3 people in the channel to start a vote mute.' });
       }
       
-      // Calculate required votes (50% of members, excluding the target)
-      const requiredVotes = Math.ceil((memberCount - 1) / 2);
+      // Calculate required votes - all eligible voters must vote
+      const requiredVotes = totalEligibleVoters; // All eligible voters must vote
       
       // Create vote embed
       const voteEmbed = new EmbedBuilder()
         .setTitle('Vote Mute')
-        .setDescription(`Vote to mute ${targetUser.toString()} for 5 minutes.\n\nRequired votes: ${requiredVotes}`)
+        .setDescription(`${requiredVotes + 1} votes required to mute ${targetUser.toString()}\nVote ends in 15 seconds`)
         .setColor('#FF0000')
-        .setFooter({ text: 'React with 👍 to vote.' })
+        .setFooter({ text: 'React with 👍 to vote' })
         .setTimestamp();
       
       // Send the vote message
-      const voteMessage = await interaction.editReply({ content: '', embeds: [voteEmbed] });
+      const voteMessage = await interaction.editReply({ embeds: [voteEmbed] });
       
       // Add the reaction for voting
       await voteMessage.react('👍');
       
-      // Set up a collector for the reactions
-      const filter = (reaction, user) => {
-        // Only count votes from users in the voice channel, excluding the target
-        const votingMember = guild.members.cache.get(user.id);
-        return reaction.emoji.name === '👍' && 
-               !user.bot && 
-               votingMember.voice.channelId === currentChannel &&
-               user.id !== targetUser.id;
-      };
+      // Fetch the message to ensure we have access to the reaction
+      const fetchedMessage = await interaction.fetchReply();
       
-      // The vote will last for 60 seconds or until enough votes are collected
-      const collector = voteMessage.createReactionCollector({ filter, time: 60000 });
+      // The vote will last for 15 seconds or until enough votes are collected
+      const collector = fetchedMessage.createReactionCollector({ 
+        time: 15000,
+        dispose: true // Make sure we handle reaction removals
+      });
       
       // Track this vote in the active votes map
       activeVoteMutes.set(voteKey, { 
         initiator: member.id, 
         target: targetUser.id,
-        message: voteMessage,
+        message: fetchedMessage,
         collector: collector
       });
       
-      // When votes are collected
-      collector.on('collect', async (reaction, user) => {
-        const currentVotes = reaction.count - 1; // Subtract 1 for the bot's reaction
+      // Function to count valid votes
+      async function countValidVotes(reaction) {
+        // Get fresh data about who's in the voice channel
+        const freshVoiceChannel = guild.channels.cache.get(currentChannel);
+        const currentVoiceMembers = freshVoiceChannel?.members || new Map();
+        
+        // Fetch all users who reacted
+        const reactedUsers = await reaction.users.fetch();
+        
+        // Filter valid votes: not the bot, not the target, and currently in the voice channel
+        const validVotes = reactedUsers.filter(user => 
+          user.id !== interaction.client.user.id && // Not the bot
+          user.id !== targetUser.id && // Not the target
+          currentVoiceMembers.has(user.id) // Currently in the voice channel
+        );
+        
+        // Log the votes being counted
+        console.log(`Valid votes: ${validVotes.size}, Required: ${requiredVotes}`);
+        
+        return validVotes.size;
+      }
+      
+      // Function to update the embed with current vote count
+      async function updateEmbed(validVotes, reaction) {
+        // Get fresh data about who's in the voice channel
+        const freshVoiceChannel = guild.channels.cache.get(currentChannel);
+        const currentVoiceMembers = freshVoiceChannel?.members || new Map();
+        const currentEligibleVoters = currentVoiceMembers.filter(m => m.id !== targetUser.id).size;
+        
+        // Get total reaction count (including bot's reaction)
+        const totalReactionCount = reaction ? reaction.count : 1;
+        
+        // For display purposes, use the totalReactionCount
+        const displayVoteCount = totalReactionCount;
+        const displayRequiredVotes = requiredVotes + 1; // Add 1 to include bot's vote
         
         // Update the embed with current vote count
-        voteEmbed.setDescription(`Vote to mute ${targetUser.toString()} for 5 minutes.\n\nVotes: ${currentVotes}/${requiredVotes}`);
-        await voteMessage.edit({ embeds: [voteEmbed] });
+        voteEmbed.setDescription(`${displayVoteCount}/${displayRequiredVotes} votes to mute ${targetUser.toString()}`);
+        await fetchedMessage.edit({ embeds: [voteEmbed] });
         
-        // If we have enough votes, mute the user
-        if (currentVotes >= requiredVotes) {
+        console.log(`Updated embed - Valid Votes: ${validVotes}/${requiredVotes}, Display: ${displayVoteCount}/${displayRequiredVotes}, Reactions: ${totalReactionCount}`);
+        
+        // End vote if all eligible voters have voted
+        if (validVotes === currentEligibleVoters) {
+          console.log(`All eligible voters (${validVotes}/${currentEligibleVoters}) have voted. Ending poll.`);
+          collector.stop('all-votes-received');
+        }
+        
+        // Also end vote if we meet the required threshold
+        if (validVotes >= requiredVotes) {
+          console.log(`Required votes met: ${validVotes}/${requiredVotes}. Stopping collector from updateEmbed.`);
           collector.stop('success');
+        }
+      }
+      
+      // When reactions are collected
+      collector.on('collect', async (reaction, user) => {
+        if (reaction.emoji.name === '👍') {
+          try {
+            console.log(`Vote collected from ${user.username}`);
+            
+            // Count valid votes
+            const validVotes = await countValidVotes(reaction);
+            
+            // Update the embed
+            await updateEmbed(validVotes, reaction);
+            
+            // If we have enough votes, end the vote immediately
+            if (validVotes >= requiredVotes) {
+              console.log(`Required votes met: ${validVotes}/${requiredVotes}. Stopping collector.`);
+              collector.stop('success');
+            }
+          } catch (error) {
+            console.error('Error processing vote:', error);
+          }
+        }
+      });
+      
+      // When reactions are removed
+      collector.on('remove', async (reaction, user) => {
+        if (reaction.emoji.name === '👍') {
+          try {
+            // Count valid votes
+            const validVotes = await countValidVotes(reaction);
+            
+            // Update the embed
+            await updateEmbed(validVotes, reaction);
+          } catch (error) {
+            console.error('Error processing vote removal:', error);
+          }
         }
       });
       
       // When the collection ends
       collector.on('end', async (collected, reason) => {
+        console.log(`Vote collector ended with reason: ${reason}`);
+        
         // Remove from active votes
         activeVoteMutes.delete(voteKey);
         
-        const votes = collected.first()?.count - 1 || 0;
+        let finalVotes = 0;
+        let finalEligibleVoters = 0;
         
-        if (reason === 'success') {
+        try {
+          // Get fresh data
+          const finalMessage = await interaction.fetchReply();
+          const thumbsUpReaction = finalMessage.reactions.cache.get('👍');
+          
+          if (thumbsUpReaction) {
+            // Count valid votes one last time
+            finalVotes = await countValidVotes(thumbsUpReaction);
+            
+            // Get fresh voice channel data
+            const freshVoiceChannel = guild.channels.cache.get(currentChannel);
+            if (freshVoiceChannel) {
+              const currentVoiceMembers = freshVoiceChannel.members;
+              finalEligibleVoters = currentVoiceMembers.filter(m => m.id !== targetUser.id).size;
+            }
+          }
+        } catch (error) {
+          console.error('Error getting final vote count:', error);
+        }
+        
+        if (reason === 'success' || reason === 'all-votes-received' || (reason === 'time' && finalVotes >= requiredVotes)) {
           // Vote passed - mute the user
           try {
+            // Get the final reaction count
+            const finalThumbsUpReaction = fetchedMessage.reactions.cache.get('👍');
+            const finalReactionCount = finalThumbsUpReaction ? finalThumbsUpReaction.count : 1;
+            const displayRequiredVotes = requiredVotes + 1; // Add 1 to include bot's vote
+            
             // Update embed to show vote passed
-            voteEmbed.setDescription(`Vote passed! ${targetUser.toString()} has been muted for 5 minutes.\n\nFinal votes: ${votes}/${requiredVotes}`);
+            voteEmbed.setDescription(`Vote passed! ${targetUser.toString()} has been muted for 5 minutes`);
             voteEmbed.setColor('#00FF00');
-            await voteMessage.edit({ embeds: [voteEmbed] });
+            await fetchedMessage.edit({ embeds: [voteEmbed] });
             
             // Apply the mute
             addMutedUser(currentChannel, targetUser.id);
             
             // Mute the user if they're still in the channel
-            if (targetMember.voice.channel && targetMember.voice.channel.id === currentChannel) {
-              await targetMember.voice.setMute(true, 'Vote mute');
+            try {
+              const freshTargetMember = await guild.members.fetch(targetUser.id);
+              if (freshTargetMember.voice.channel && freshTargetMember.voice.channel.id === currentChannel) {
+                await freshTargetMember.voice.setMute(true, 'Vote mute');
+              }
+            } catch (muteError) {
+              console.error('Error muting user:', muteError);
             }
             
             // Set a timeout to unmute after 5 minutes
@@ -183,13 +294,18 @@ module.exports = {
             console.error('Error applying vote mute:', muteError);
             voteEmbed.setDescription(`Error applying vote mute: ${muteError.message}`);
             voteEmbed.setColor('#FF0000');
-            await voteMessage.edit({ embeds: [voteEmbed] });
+            await fetchedMessage.edit({ embeds: [voteEmbed] });
           }
         } else if (reason === 'time') {
+          // Get the final reaction count
+          const finalThumbsUpReaction = fetchedMessage.reactions.cache.get('👍');
+          const finalReactionCount = finalThumbsUpReaction ? finalThumbsUpReaction.count : 1;
+          const displayRequiredVotes = requiredVotes + 1; // Add 1 to include bot's vote
+          
           // Vote failed due to timeout
-          voteEmbed.setDescription(`Vote failed! Not enough votes to mute ${targetUser.toString()}.\n\nFinal votes: ${votes}/${requiredVotes}`);
+          voteEmbed.setDescription(`Vote failed! Not enough votes to mute ${targetUser.toString()}`);
           voteEmbed.setColor('#888888');
-          await voteMessage.edit({ embeds: [voteEmbed] });
+          await fetchedMessage.edit({ embeds: [voteEmbed] });
         }
       });
       
