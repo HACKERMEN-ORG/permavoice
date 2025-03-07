@@ -37,9 +37,11 @@ module.exports = {
       }
 
     try {
-      if (!targetnew.voice.channel || targetnew.voice.channel.id !== member.voice.channel.id) {
-        return interaction.reply({ content: `<@${target}> is not in the voice channel.`, ephemeral: true });
-    }
+      if (!targetnew.voice.channel){
+          return interaction.reply({
+            content: 'The channel you are looking for does not exist.', ephemeral: true
+          });
+      }
       else {
         targetChannel.permissionOverwrites.delete(interaction.user);
         channelOwners.set(currentChannel, target);
