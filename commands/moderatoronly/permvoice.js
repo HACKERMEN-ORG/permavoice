@@ -16,6 +16,12 @@ module.exports = {
           .setRequired(true))
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
   async execute(interaction) {
+      if (!interaction.member.permissions.has(PermissionFlagsBits.ManageChannels)) {
+        return interaction.reply({ 
+          content: 'You do not have permission to use this command. It requires the Manage Channels permission.', 
+          ephemeral: true 
+        });
+      }
     const guild = interaction.guild
     const target = interaction.options.getChannel('channel');
 
