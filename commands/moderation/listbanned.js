@@ -5,7 +5,7 @@ const { channelOwners } = require('../../methods/channelowner');
 module.exports = {
   category: 'channelcommands',
   data: new SlashCommandBuilder()
-    .setName('list_banned')
+    .setName('listbanned')
     .setDescription('Lists all users banned from the channel.'),
   async execute(interaction) {
     const guild = interaction.guild;

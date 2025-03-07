@@ -1,63 +1,81 @@
-const { Client, SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
+const { removeMutedUser, isUserMuted } = require('../../methods/channelMutes');
 
 module.exports = {
   category: 'channelcommands',
   data: new SlashCommandBuilder()
     .setName('unmute')
-    .setDescription('Unmute a user in your channel (room-specific unmute).')
+    .setDescription('Unmute a user in your channel.')
     .addUserOption(option =>
       option.setName('user')
         .setDescription('The user to unmute.')
         .setRequired(true)),
   async execute(interaction) {
-    const guild = interaction.guild;
-    const member = await interaction.guild.members.fetch(interaction.user.id);
+    // Defer reply immediately to prevent timeout
+    await interaction.deferReply({ ephemeral: true });
     
-    if (!member.voice.channel) {
-      return interaction.reply({ content: 'You must be in a voice channel to use this command.', ephemeral: true });
-    }
-    
-    const currentChannel = member.voice.channel.id;
-    const targetChannel = guild.channels.cache.get(currentChannel);
-    const targetUser = interaction.options.getUser('user');
-    const targetMember = await guild.members.fetch(targetUser.id);
-
-    // Check if the user is in a temporary channel
-    if (!channelOwners.has(currentChannel)) {
-      return interaction.reply({ content: 'You must be in a temporary channel.', ephemeral: true });
-    }
-
-    // Check if the user is the owner of the channel
-    if (channelOwners.get(currentChannel) !== member.id) {
-      return interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: true });
-    }
-
     try {
-      // Get the current permission overwrite for the user
-      const currentPermissions = targetChannel.permissionOverwrites.cache.get(targetUser.id);
+      const guild = interaction.guild;
+      const member = await interaction.guild.members.fetch(interaction.user.id);
       
-      // Check if the user is currently muted
-      if (!currentPermissions || !currentPermissions.deny.has(PermissionFlagsBits.Speak)) {
-        return interaction.reply({ content: `${targetUser.username} is not muted in this channel.`, ephemeral: true });
+      if (!member.voice.channel) {
+        return await interaction.editReply({ content: 'You must be in a voice channel to use this command.' });
       }
       
-      // Remove the Speak denial from permissions (unmute)
-      // We use null to reset the permission to default
-      await targetChannel.permissionOverwrites.edit(targetUser, { Speak: null });
-      
-      // If no other permissions are being applied to this user, clean up by removing the override
-      const updatedPermissions = targetChannel.permissionOverwrites.cache.get(targetUser.id);
-      if (updatedPermissions && updatedPermissions.deny.bitfield === 0n && updatedPermissions.allow.bitfield === 0n) {
-        await targetChannel.permissionOverwrites.delete(targetUser);
+      const currentChannel = member.voice.channel.id;
+      const targetUser = interaction.options.getUser('user');
+
+      // Check if the user is in a temporary channel
+      if (!channelOwners.has(currentChannel)) {
+        return await interaction.editReply({ content: 'You must be in a temporary channel.' });
+      }
+
+      // Check if the user is the owner of the channel
+      if (channelOwners.get(currentChannel) !== member.id) {
+        return await interaction.editReply({ content: 'You do not have permission to use this command.' });
+      }
+
+      // Check if the user is actually muted in this channel
+      if (!isUserMuted(currentChannel, targetUser.id)) {
+        return await interaction.editReply({ content: `${targetUser.username} is not muted in this channel.` });
       }
       
-      return interaction.reply({ content: `${targetUser.username} has been unmuted in this channel.`, ephemeral: true });
+      // First, update our tracking system to mark this as an explicit unmute
+      // This is critical so the voice state handler respects this action
+      removeMutedUser(currentChannel, targetUser.id);
+      console.log(`Unmuting ${targetUser.id} in channel ${currentChannel} (command)`);
+      
+      try {
+        // Fetch the target member
+        const targetMember = await guild.members.fetch(targetUser.id);
+        
+        // If the user is in the voice channel, remove the server mute
+        if (targetMember.voice.channel && targetMember.voice.channel.id === currentChannel) {
+          try {
+            // Unmute the user in this channel
+            await targetMember.voice.setMute(false, 'Channel owner unmuted user');
+            console.log(`Successfully unmuted ${targetUser.id} via command`);
+          } catch (muteError) {
+            console.error('Error unmuting user:', muteError);
+            // Continue anyway - the user is tracked as unmuted in our system
+          }
+        }
+        
+        return await interaction.editReply({ content: `${targetUser.username} has been unmuted.` });
+      } catch (memberError) {
+        console.error('Error fetching member for unmute:', memberError);
+        // Continue anyway since we've already updated our tracking system
+        return await interaction.editReply({ content: `${targetUser.username} has been unmuted.` });
+      }
     } catch (error) {
-      console.error('Error unmuting user:', error);
-      await interaction.reply({ content: 'There was an error while using the command.', ephemeral: true });
+      console.error('Error in unmute command:', error);
+      
+      // Check if the interaction can still be replied to
+      if (interaction.deferred) {
+        await interaction.editReply({ content: 'There was an error while using the command.' }).catch(console.error);
+      }
     }
   },
 };
-
