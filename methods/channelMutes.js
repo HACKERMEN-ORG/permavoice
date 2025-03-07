@@ -21,9 +21,18 @@ const explicitActions = new Discord.Collection();
  * @param {string} userId - The user ID to mute
  */
 function addMutedUser(channelId, userId) {
+    // Don't allow muting in non-existent channels
+    if (!channelId) {
+        console.error('Attempted to mute user in null/undefined channel');
+        return;
+    }
+    
+    // Create the channel mute set if it doesn't exist
     if (!channelMutes.has(channelId)) {
         channelMutes.set(channelId, new Set());
     }
+    
+    // Add the user to the muted set
     channelMutes.get(channelId).add(userId);
     
     // Record explicit mute action to prevent race conditions
@@ -43,6 +52,7 @@ function addMutedUser(channelId, userId) {
     }, 10000);
     
     saveMuteData();
+    console.log(`User ${userId} added to mute list for channel ${channelId}`);
 }
 
 /**
@@ -52,6 +62,12 @@ function addMutedUser(channelId, userId) {
  * @returns {boolean} - Whether the user was muted and has been unmuted
  */
 function removeMutedUser(channelId, userId) {
+    // Don't attempt to unmute from non-existent channels
+    if (!channelId) {
+        console.error('Attempted to unmute user from null/undefined channel');
+        return false;
+    }
+    
     if (!channelMutes.has(channelId)) {
         return false;
     }
@@ -80,6 +96,7 @@ function removeMutedUser(channelId, userId) {
     }
     
     saveMuteData();
+    console.log(`User ${userId} removed from mute list for channel ${channelId}`);
     return result;
 }
 
@@ -90,6 +107,17 @@ function removeMutedUser(channelId, userId) {
  * @returns {boolean} - Whether the user is muted in the channel
  */
 function isUserMuted(channelId, userId) {
+    // Safety check for null/undefined values
+    if (!channelId || !userId) {
+        return false;
+    }
+    
+    // Channel owners are never muted in their own channel
+    const { channelOwners } = require('./channelowner');
+    if (channelOwners.has(channelId) && channelOwners.get(channelId) === userId) {
+        return false;
+    }
+    
     // If there's an explicit unmute action, user is considered unmuted
     if (explicitActions.has(userId) && 
         explicitActions.get(userId).action === 'unmute' &&
@@ -97,9 +125,11 @@ function isUserMuted(channelId, userId) {
         return false;
     }
     
+    // Check the mute collection
     if (!channelMutes.has(channelId)) {
         return false;
     }
+    
     return channelMutes.get(channelId).has(userId);
 }
 
@@ -154,8 +184,28 @@ function getMutedUsers(channelId) {
  * @param {string} channelId - The channel ID
  */
 function clearChannelMutes(channelId) {
-    channelMutes.delete(channelId);
-    saveMuteData();
+    if (!channelId) return;
+    
+    // First check if there are any muted users in this channel
+    if (channelMutes.has(channelId)) {
+        console.log(`Cleaning up mute data for deleted channel ${channelId}`);
+        
+        // Log the users that were muted in this channel
+        const mutedUsers = channelMutes.get(channelId);
+        console.log(`Removing ${mutedUsers.size} muted users from deleted channel`);
+        
+        // Remove the channel from mute tracking
+        channelMutes.delete(channelId);
+        
+        // Also clear any explicit actions for this channel
+        for (const [userId, action] of explicitActions.entries()) {
+            if (action.channelId === channelId) {
+                explicitActions.delete(userId);
+            }
+        }
+        
+        saveMuteData();
+    }
 }
 
 /**
@@ -219,3 +269,7 @@ module.exports = {
     hasExplicitAction,
     getExplicitAction
 };
+
+
+
+

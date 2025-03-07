@@ -87,35 +87,49 @@ const loadChannelData = () => {
 // Method to validate channels (removing ones that no longer exist)
 const validateChannels = async (client) => {
   let changed = false;
+  const validChannelIds = new Set();
   
-  // Check channel owners
-  for (const [channelId] of channelOwners) {
-    try {
-      const channel = await client.channels.fetch(channelId).catch(() => null);
-      if (!channel) {
-        console.log(`Channel ${channelId} no longer exists, removing from state`);
-        channelOwners.delete(channelId);
-        togglePrivate.delete(channelId);
-        toggleLock.delete(channelId);
-        waitingRoom.delete(channelId);
-        changed = true;
-      }
-    } catch (error) {
-      console.error(`Error validating channel ${channelId}:`, error);
+  // First, collect all valid channel IDs
+  try {
+    const guilds = client.guilds.cache.values();
+    for (const guild of guilds) {
+      const channels = await guild.channels.fetch();
+      channels.forEach(channel => {
+        if (channel && channel.type === 2) { // Voice channels
+          validChannelIds.add(channel.id);
+        }
+      });
+    }
+    console.log(`Found ${validChannelIds.size} valid voice channels`);
+  } catch (error) {
+    console.error('Error fetching channels:', error);
+  }
+  
+  // Check and clean up channel owners (this also affects private/lock/mutes)
+  const ownedChannelIds = Array.from(channelOwners.keys());
+  for (const channelId of ownedChannelIds) {
+    if (!validChannelIds.has(channelId)) {
+      console.log(`Channel ${channelId} no longer exists, removing from state`);
+      channelOwners.delete(channelId);
+      togglePrivate.delete(channelId);
+      toggleLock.delete(channelId);
+      waitingRoom.delete(channelId);
+      
+      // Also clean up any mute data for this channel
+      const { clearChannelMutes } = require('./channelMutes');
+      clearChannelMutes(channelId);
+      
+      changed = true;
     }
   }
   
-  // Check waiting rooms
-  for (const [channelId, waitingRoomId] of waitingRoom) {
-    try {
-      const waitroom = await client.channels.fetch(waitingRoomId).catch(() => null);
-      if (!waitroom) {
-        console.log(`Waiting room ${waitingRoomId} no longer exists, removing`);
-        waitingRoom.delete(channelId);
-        changed = true;
-      }
-    } catch (error) {
-      console.error(`Error validating waiting room ${channelId}:`, error);
+  // Check and clean up waiting rooms
+  const waitingRoomIds = Array.from(waitingRoom.values());
+  for (const [channelId, waitingRoomId] of waitingRoom.entries()) {
+    if (!validChannelIds.has(waitingRoomId)) {
+      console.log(`Waiting room ${waitingRoomId} no longer exists, removing`);
+      waitingRoom.delete(channelId);
+      changed = true;
     }
   }
   
@@ -213,3 +227,6 @@ module.exports = {
   validateChannels,
   setupExitHandlers
 };
+
+
+
