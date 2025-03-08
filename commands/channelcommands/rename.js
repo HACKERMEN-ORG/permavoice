@@ -3,6 +3,7 @@ const { SlashCommandBuilder } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 const Settings = require('../../Settings.js');
+const channelNameManager = require('../../methods/customChannelNames');
 
 // Import the submod manager correctly
 let submodManager;
@@ -18,8 +19,6 @@ try {
 
 module.exports = {
   category: 'channelcommands',
-  // Make sure the command is globally available
-  notglobal: false,
   data: new SlashCommandBuilder()
     .setName('rename')
     .setDescription('Rename your temporary voice channel')
@@ -27,7 +26,11 @@ module.exports = {
       option.setName('name')
         .setDescription('The new name for your channel')
         .setRequired(true)
-        .setMaxLength(100)),
+        .setMaxLength(100))
+    .addBooleanOption(option =>
+      option.setName('remember')
+        .setDescription('Remember this name for future channels? (Default: true)')
+        .setRequired(false)),
   async execute(interaction) {
     // Defer reply to prevent timeout
     await interaction.deferReply({ ephemeral: true });
@@ -43,6 +46,9 @@ module.exports = {
       const currentChannel = member.voice.channel.id;
       const newName = interaction.options.getString('name');
       
+      // Get the remember option (default to true if not specified)
+      const rememberName = interaction.options.getBoolean('remember') ?? true;
+      
       // Check if the user is in a temporary channel
       if (!channelOwners.has(currentChannel)) {
         return await interaction.editReply({ content: 'You must be in a temporary channel to use this command.' });
@@ -54,7 +60,8 @@ module.exports = {
       }
 
       // Check if the user is the owner of the channel or a submoderator
-      if (channelOwners.get(currentChannel) !== member.id && !submodManager.isSubmod(currentChannel, member.id)) {
+      const isOwner = channelOwners.get(currentChannel) === member.id;
+      if (!isOwner && !submodManager.isSubmod(currentChannel, member.id)) {
         return await interaction.editReply({ content: 'You do not have permission to rename this channel.' });
       }
 
@@ -64,7 +71,6 @@ module.exports = {
       }
 
       // Check for inappropriate content or Discord's channel name requirements
-      // This is a basic filter, you might want to enhance it
       if (newName.includes('@everyone') || newName.includes('@here') || /[^\w\s\-]/g.test(newName)) {
         return await interaction.editReply({ 
           content: 'The channel name contains invalid characters or restricted terms. Please use only letters, numbers, spaces, and hyphens.' 
@@ -77,15 +83,31 @@ module.exports = {
         return await interaction.editReply({ content: 'Channel not found. Please try again.' });
       }
 
+      // Save custom channel name preference if the user is the owner and wants to remember it
+      if (isOwner && rememberName) {
+        channelNameManager.setCustomChannelName(member.id, newName);
+      } else if (isOwner && !rememberName) {
+        // User explicitly chose not to remember the name
+        channelNameManager.removeCustomChannelName(member.id);
+      }
+
       // Add the original owner's name to keep track
       const ownerMember = await interaction.guild.members.fetch(channelOwners.get(currentChannel));
-      const finalName = `${newName} (${ownerMember.user.username})`;
+      const finalName = `${newName}`;  //(${ownerMember.user.username})
       
       await channel.setName(finalName);
       
-      return await interaction.editReply({ 
-        content: `Channel has been renamed to "${newName}".` 
-      });
+      // Customize message based on whether the name was saved for future use
+      let responseMessage = `Channel has been renamed to "${newName}".`;
+      if (isOwner) {
+        if (rememberName) {
+          responseMessage += "\nThis name will be used for your future voice channels.";
+        } else {
+          responseMessage += "\nThis name will NOT be saved for future channels.";
+        }
+      }
+      
+      return await interaction.editReply({ content: responseMessage });
       
     } catch (error) {
       console.error('Error in rename command:', error);
