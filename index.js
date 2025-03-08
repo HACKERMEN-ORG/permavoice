@@ -223,13 +223,24 @@ client.on('voiceStateUpdate', (oldState, newState) => {
         // Check if the user was just muted (not muted before, but muted now)
         const wasJustMuted = oldState.serverMute === false && newState.serverMute === true;
         
-        // If the user was just muted, check if it was done by an admin
-        // by not automatically unmuting them and respecting the server mute
+        // Check if the user was just unmuted (was muted before, but not muted now)
+        const wasJustUnmuted = oldState.serverMute === true && newState.serverMute === false;
+        
+        // Handle server mutes by admins
         if (wasJustMuted) {
             // Add them to our internal mute list to track this server mute
             // This prevents the bot from automatically unmuting them
             addMutedUser(channelId, userId);
             console.log(`User ${userId} was server muted in channel ${channelId}, adding to mute list`);
+            return;
+        }
+        
+        // Handle server unmutes by admins
+        if (wasJustUnmuted) {
+            // Remove them from our internal mute list when they get server unmuted
+            // This ensures the bot won't re-mute them
+            removeMutedUser(channelId, userId);
+            console.log(`User ${userId} was server unmuted in channel ${channelId}, removing from mute list`);
             return;
         }
         
