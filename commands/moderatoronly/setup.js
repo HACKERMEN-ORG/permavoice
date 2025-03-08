@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const FIELD_CATERGORYID_NAME = "CATEGORYID"
 const FIELD_VOICECREATECHANNELID_NAME = "VOICECREATECHANNELID"
 const FIELD_AUDITLOGCHANNELID_NAME = "AUDITLOGCHANNELID"
+const FIELD_ANNOUNCEMENTCHANNELID_NAME = "ANNOUNCEMENTCHANNELID"
 
 /* function  getValueFromField(fieldName, line)
  * 
@@ -45,25 +46,31 @@ function readSettingsFile(guildId)
     settingsFile = {}
     for (const line of lines)
     {
-	if(line.startsWith(FIELD_CATERGORYID_NAME))
-	{
-	    settingsFile.category = getValueFromField(FIELD_CATERGORYID_NAME, line)
-            
-        if(settingsFile.category === null)
-            console.error(`Could not find the field ${FIELD_CATERGORYID_NAME}`)
-	}
-	else if(line.startsWith(FIELD_VOICECREATECHANNELID_NAME))
-	{
-	    settingsFile.voiceChannelId = getValueFromField(FIELD_VOICECREATECHANNELID_NAME, line)
-        if(settingsFile.voiceChannelId === null)
-            console.error(`Could not find the field ${FIELD_VOICECREATECHANNELID_NAME}`)
-	}
-    else if(line.startsWith(FIELD_AUDITLOGCHANNELID_NAME))
-    {
-        settingsFile.auditLogChannelId = getValueFromField(FIELD_AUDITLOGCHANNELID_NAME, line)
-        if(settingsFile.auditLogChannelId === null)
-            console.error(`Could not find the field ${FIELD_AUDITLOGCHANNELID_NAME}`)
-    }
+        if(line.startsWith(FIELD_CATERGORYID_NAME))
+        {
+            settingsFile.category = getValueFromField(FIELD_CATERGORYID_NAME, line)
+                
+            if(settingsFile.category === null)
+                console.error(`Could not find the field ${FIELD_CATERGORYID_NAME}`)
+        }
+        else if(line.startsWith(FIELD_VOICECREATECHANNELID_NAME))
+        {
+            settingsFile.voiceChannelId = getValueFromField(FIELD_VOICECREATECHANNELID_NAME, line)
+            if(settingsFile.voiceChannelId === null)
+                console.error(`Could not find the field ${FIELD_VOICECREATECHANNELID_NAME}`)
+        }
+        else if(line.startsWith(FIELD_AUDITLOGCHANNELID_NAME))
+        {
+            settingsFile.auditLogChannelId = getValueFromField(FIELD_AUDITLOGCHANNELID_NAME, line)
+            if(settingsFile.auditLogChannelId === null)
+                console.error(`Could not find the field ${FIELD_AUDITLOGCHANNELID_NAME}`)
+        }
+        else if(line.startsWith(FIELD_ANNOUNCEMENTCHANNELID_NAME))
+        {
+            settingsFile.announcementChannelId = getValueFromField(FIELD_ANNOUNCEMENTCHANNELID_NAME, line)
+            if(settingsFile.announcementChannelId === null)
+                console.error(`Could not find the field ${FIELD_ANNOUNCEMENTCHANNELID_NAME}`)
+        }
     }
     
     return settingsFile
@@ -108,6 +115,7 @@ function writeSettingsFile(settings, guildID)
     fileData = fileData + writeValueToField(FIELD_CATERGORYID_NAME, settings.category)
     fileData = fileData + writeValueToField(FIELD_VOICECREATECHANNELID_NAME, settings.voiceChannelId)
     fileData = fileData + writeValueToField(FIELD_AUDITLOGCHANNELID_NAME, settings.auditLogChannelId)
+    fileData = fileData + writeValueToField(FIELD_ANNOUNCEMENTCHANNELID_NAME, settings.announcementChannelId)
     
     fs.writeFileSync(`./globalserversettings/setupsettings/${guildID}/settings.cfg`, fileData, 'utf8')
 }
@@ -116,7 +124,7 @@ function writeSettingsFile(settings, guildID)
 function createSettingsFile(guildId) {
   const directoryPath = `./globalserversettings/setupsettings/${guildId}`;
   const filePath = `${directoryPath}/settings.cfg`;
-  const fileContents = `${FIELD_CATERGORYID_NAME} = ""\n${FIELD_VOICECREATECHANNELID_NAME} = ""\n${FIELD_AUDITLOGCHANNELID_NAME} = ""`;
+  const fileContents = `${FIELD_CATERGORYID_NAME} = ""\n${FIELD_VOICECREATECHANNELID_NAME} = ""\n${FIELD_AUDITLOGCHANNELID_NAME} = ""\n${FIELD_ANNOUNCEMENTCHANNELID_NAME} = ""`;
 
   try {
     fs.mkdirSync(directoryPath, { recursive: true });
@@ -150,6 +158,12 @@ module.exports = {
         .setDescription('Channel for logging moderation actions')
         .addChannelTypes(ChannelType.GuildText)
         .setRequired(false))
+    .addChannelOption(option =>
+      option
+        .setName('announcement')
+        .setDescription('Channel for server announcements')
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+        .setRequired(false))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
   async execute(interaction) {
     let settings = {}
@@ -174,11 +188,19 @@ module.exports = {
       varTargetedAuditLog = "";
     }
 
+    try {
+      varTargetedAnnouncement = interaction.options.getChannel('announcement').id;
+      settings.announcementChannelId = varTargetedAnnouncement;
+    } catch (error) {
+      varTargetedAnnouncement = "";
+    }
+
     const guild = interaction.guild
 
     let thecategoryId;
     let thevoiceChannelId;
     let auditLogChannelId;
+    let announcementChannelId;
 
     if (!fs.existsSync(`./globalserversettings/setupsettings/${guild.id}/settings.cfg`)) {
       console.log("Settings file does not exist. Creating settings file.");
@@ -219,6 +241,11 @@ module.exports = {
           settings.auditLogChannelId = existingSettings.auditLogChannelId;
         }
 
+        // Preserve announcement channel if not specified but already set
+        if (!settings.announcementChannelId && existingSettings.announcementChannelId) {
+          settings.announcementChannelId = existingSettings.announcementChannelId;
+        }
+
         // Write all settings back to file
         writeSettingsFile(settings, guild.id);
 
@@ -243,6 +270,14 @@ module.exports = {
               responseMessage += `\nAudit logs will be sent to <#${settings.auditLogChannelId}>.`;
             }
           }
+
+          // Add info about announcement channel in response message
+          if (settings.announcementChannelId) {
+            const announcementChannel = await guild.channels.fetch(settings.announcementChannelId);
+            if (announcementChannel) {
+              responseMessage += `\nAnnouncements will be sent to <#${settings.announcementChannelId}>.`;
+            }
+          }
           
           await interaction.reply({ content: responseMessage, ephemeral: true });
         } catch (error) {
@@ -259,6 +294,9 @@ module.exports = {
           }
           if (settings.auditLogChannelId) {
             responseMessage += `\nAudit log channel ID: ${settings.auditLogChannelId}`;
+          }
+          if (settings.announcementChannelId) {
+            responseMessage += `\nAnnouncement channel ID: ${settings.announcementChannelId}`;
           }
           await interaction.reply({ content: responseMessage, ephemeral: true });
         }
