@@ -2,15 +2,16 @@ const { Client, SlashCommandBuilder, PermissionsBitField, ChannelType, GuildChan
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 
-// Import the submod functions if they exist
-let isSubmod;
+// Import the submod manager correctly
+let submodManager;
 try {
-  const submodModule = require('../channelcommands/submod');
-  isSubmod = submodModule.isSubmod;
+  submodManager = require('../../methods/submodmanager');
 } catch (error) {
-  // Create placeholder function
-  isSubmod = () => false;
-  console.log('Submod module not available for unban command.');
+  console.error('Error importing submodmanager:', error);
+  // Create a placeholder if module doesn't exist yet
+  submodManager = {
+    isSubmod: () => false
+  };
 }
 
 module.exports = {
@@ -38,9 +39,9 @@ module.exports = {
         return interaction.reply({ content: 'You must be in a temporary channel.', ephemeral: true });
     }
 
-    //Check if the user is the owner of the channel or a submoderator
-    if (channelOwners.get(currentChannel) !== member.id && !isSubmod(currentChannel, member.id)) {
-        return interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: true });
+    //Check if the user is the owner of the channel - SUBMODS CANNOT UNBAN
+    if (channelOwners.get(currentChannel) !== member.id) {
+        return interaction.reply({ content: 'You do not have permission to use this command. Only channel owners can unban users.', ephemeral: true });
     }
 
     //Prevent the user from unbanning themselves
