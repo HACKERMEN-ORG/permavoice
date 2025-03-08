@@ -2,6 +2,8 @@ const { SlashCommandBuilder } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 const { addMutedUser, isUserMuted } = require('../../methods/channelMutes');
+const auditLogger = require('../../methods/auditLogger');
+
 
 // Import the submod manager correctly
 let submodManager;
@@ -89,6 +91,9 @@ module.exports = {
             // Mute the user in this channel
             await targetMember.voice.setMute(true, 'Channel moderation muted user');
             console.log(`Successfully muted ${targetUser.id} via command`);
+            // Log the mute action
+            const targetChannel = guild.channels.cache.get(currentChannel);
+            auditLogger.logUserMute(guild.id, targetChannel, targetUser, member.user);
           } catch (muteError) {
             console.error('Error muting user:', muteError);
             // Continue anyway - the user is tracked as muted in our system

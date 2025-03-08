@@ -4,6 +4,7 @@ const fs = require('node:fs');
 
 const FIELD_CATERGORYID_NAME = "CATEGORYID"
 const FIELD_VOICECREATECHANNELID_NAME = "VOICECREATECHANNELID"
+const FIELD_AUDITLOGCHANNELID_NAME = "AUDITLOGCHANNELID"
 
 /* function  getValueFromField(fieldName, line)
  * 
@@ -21,11 +22,11 @@ function getValueFromField(fieldName, line)
     
     if(matches == null)
     {
-	return null // Group 1
+	    return null // Group 1
     }
     else
     {
-	return matches[1] // Group 1
+	    return matches[1] // Group 1
     }
 }
 
@@ -48,15 +49,21 @@ function readSettingsFile(guildId)
 	{
 	    settingsFile.category = getValueFromField(FIELD_CATERGORYID_NAME, line)
             
-            if(settingsFile.category === null)
-                log.error(`Could not find the field ${FIELD_CATERGORYID_NAME}`)
+        if(settingsFile.category === null)
+            console.error(`Could not find the field ${FIELD_CATERGORYID_NAME}`)
 	}
 	else if(line.startsWith(FIELD_VOICECREATECHANNELID_NAME))
 	{
 	    settingsFile.voiceChannelId = getValueFromField(FIELD_VOICECREATECHANNELID_NAME, line)
-            if(settingsFile.voiceChannelId === null)
-                log.error(`Could not find the field ${FIELD_VOICECREATECHANNELID_NAME}`)
+        if(settingsFile.voiceChannelId === null)
+            console.error(`Could not find the field ${FIELD_VOICECREATECHANNELID_NAME}`)
 	}
+    else if(line.startsWith(FIELD_AUDITLOGCHANNELID_NAME))
+    {
+        settingsFile.auditLogChannelId = getValueFromField(FIELD_AUDITLOGCHANNELID_NAME, line)
+        if(settingsFile.auditLogChannelId === null)
+            console.error(`Could not find the field ${FIELD_AUDITLOGCHANNELID_NAME}`)
+    }
     }
     
     return settingsFile
@@ -100,6 +107,7 @@ function writeSettingsFile(settings, guildID)
     
     fileData = fileData + writeValueToField(FIELD_CATERGORYID_NAME, settings.category)
     fileData = fileData + writeValueToField(FIELD_VOICECREATECHANNELID_NAME, settings.voiceChannelId)
+    fileData = fileData + writeValueToField(FIELD_AUDITLOGCHANNELID_NAME, settings.auditLogChannelId)
     
     fs.writeFileSync(`./globalserversettings/setupsettings/${guildID}/settings.cfg`, fileData, 'utf8')
 }
@@ -108,7 +116,7 @@ function writeSettingsFile(settings, guildID)
 function createSettingsFile(guildId) {
   const directoryPath = `./globalserversettings/setupsettings/${guildId}`;
   const filePath = `${directoryPath}/settings.cfg`;
-  const fileContents = `CATEGORYID = ""\nVOICECREATECHANNELID = ""`;
+  const fileContents = `${FIELD_CATERGORYID_NAME} = ""\n${FIELD_VOICECREATECHANNELID_NAME} = ""\n${FIELD_AUDITLOGCHANNELID_NAME} = ""`;
 
   try {
     fs.mkdirSync(directoryPath, { recursive: true });
@@ -136,6 +144,12 @@ module.exports = {
         .setDescription('The create voice channel id to use.')
         .addChannelTypes(ChannelType.GuildVoice)
         .setRequired(false))
+    .addChannelOption(option =>
+      option
+        .setName('auditlog')
+        .setDescription('Channel for logging moderation actions')
+        .addChannelTypes(ChannelType.GuildText)
+        .setRequired(false))
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels),
   async execute(interaction) {
     let settings = {}
@@ -152,10 +166,19 @@ module.exports = {
     } catch (error) {
       varTargetedVoiceCreate = "";
     }
+
+    try {
+      varTargetedAuditLog = interaction.options.getChannel('auditlog').id;
+      settings.auditLogChannelId = varTargetedAuditLog;
+    } catch (error) {
+      varTargetedAuditLog = "";
+    }
+
     const guild = interaction.guild
 
     let thecategoryId;
     let thevoiceChannelId;
+    let auditLogChannelId;
 
     if (!fs.existsSync(`./globalserversettings/setupsettings/${guild.id}/settings.cfg`)) {
       console.log("Settings file does not exist. Creating settings file.");
@@ -163,42 +186,82 @@ module.exports = {
     }
 
     try {
-        //Category
-        
-        if(!settings.category)
-        {
-            let category = await guild.channels.create({name: 'Temporary Voice Create', type: ChannelType.GuildCategory});
-            thecategoryId = category.id;
-            console.log("Category created with ID:", thecategoryId);
-            settings.category = thecategoryId
+        // Load existing settings if available
+        let existingSettings = {};
+        try {
+          existingSettings = readSettingsFile(guild.id);
+        } catch (error) {
+          console.log("Could not read existing settings, using defaults");
+        }
+
+        // Only create category if not specified and not already set
+        if (!settings.category && !existingSettings.category) {
+          let category = await guild.channels.create({name: 'Temporary Voice Create', type: ChannelType.GuildCategory});
+          thecategoryId = category.id;
+          console.log("Category created with ID:", thecategoryId);
+          settings.category = thecategoryId;
+        } else if (!settings.category && existingSettings.category) {
+          settings.category = existingSettings.category;
         }
         
-        if(!settings.voiceChannelId)
-        {
-          let voice = await guild.channels.create({ name: 'Temporary Voice Create', type: ChannelType.GuildVoice })
+        // Only create voice channel if not specified and not already set
+        if (!settings.voiceChannelId && !existingSettings.voiceChannelId) {
+          let voice = await guild.channels.create({ name: 'Temporary Voice Create', type: ChannelType.GuildVoice });
           thevoiceChannelId = voice.id;
-          (console.log("Voice created with ID:", thevoiceChannelId))
-          settings.voiceChannelId = thevoiceChannelId
+          console.log("Voice created with ID:", thevoiceChannelId);
+          settings.voiceChannelId = thevoiceChannelId;
+        } else if (!settings.voiceChannelId && existingSettings.voiceChannelId) {
+          settings.voiceChannelId = existingSettings.voiceChannelId;
         }
 
-        writeSettingsFile(settings, guild.id)
+        // Preserve audit log channel if not specified but already set
+        if (!settings.auditLogChannelId && existingSettings.auditLogChannelId) {
+          settings.auditLogChannelId = existingSettings.auditLogChannelId;
+        }
 
-      try {
-       const voice = await guild.channels.fetch(settings.voiceChannelId);
-       const catvoice = await guild.channels.fetch(settings.category);
+        // Write all settings back to file
+        writeSettingsFile(settings, guild.id);
 
-       if (!(voice instanceof GuildChannel) || !(catvoice instanceof GuildChannel)) {
-        throw new Error('Voice channel or category not found');
-       }
+        // Try to move the voice channel to the category if both exist
+        try {
+          const voice = await guild.channels.fetch(settings.voiceChannelId);
+          const catvoice = await guild.channels.fetch(settings.category);
 
-        await voice.setParent(catvoice, { lockPermissions: false });
-        console.log('Voice channel moved to category');
-        await interaction.reply({ content:`Voice Channels moved to category.`, ephemeral: true });
+          if (!(voice instanceof GuildChannel) || !(catvoice instanceof GuildChannel)) {
+            throw new Error('Voice channel or category not found');
+          }
 
-    } catch (error) {
-        console.log(error);
-        console.error('Error moving voice channel to category:')
-  };
+          await voice.setParent(catvoice, { lockPermissions: false });
+          console.log('Voice channel moved to category');
+          
+          let responseMessage = 'Setup complete. Voice channel moved to category.';
+          
+          // Add info about audit log in response message
+          if (settings.auditLogChannelId) {
+            const auditChannel = await guild.channels.fetch(settings.auditLogChannelId);
+            if (auditChannel) {
+              responseMessage += `\nAudit logs will be sent to <#${settings.auditLogChannelId}>.`;
+            }
+          }
+          
+          await interaction.reply({ content: responseMessage, ephemeral: true });
+        } catch (error) {
+          console.log(error);
+          console.error('Error moving voice channel to category:');
+          
+          // Still provide a response about what was configured
+          let responseMessage = 'Setup partially complete.';
+          if (settings.category) {
+            responseMessage += `\nCategory ID: ${settings.category}`;
+          }
+          if (settings.voiceChannelId) {
+            responseMessage += `\nVoice channel ID: ${settings.voiceChannelId}`;
+          }
+          if (settings.auditLogChannelId) {
+            responseMessage += `\nAudit log channel ID: ${settings.auditLogChannelId}`;
+          }
+          await interaction.reply({ content: responseMessage, ephemeral: true });
+        }
 
     } catch (error) {
       console.log(error);

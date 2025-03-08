@@ -1,6 +1,8 @@
 const { Client, SlashCommandBuilder, PermissionsBitField, ChannelType, GuildChannel } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
+const auditLogger = require('../../methods/auditLogger');
+
 
 // Import the submod manager correctly
 let submodManager;
@@ -72,9 +74,13 @@ module.exports = {
             targetnew.voice.disconnect();
             await interaction.reply({ content: `<@${target}> has been kicked from the channel.`, ephemeral: true });
             await interaction.followUp({ content: `<@${target}> has been banned from the channel.`, ephemeral: true });
+            // Log the ban action
+            auditLogger.logUserBan(guild.id, targetChannel, targetnew.user, member.user);
         }
         else{
             await interaction.reply({ content: `<@${target}> has been banned from the channel.`, ephemeral: true });
+            // Log the ban action
+            auditLogger.logUserBan(guild.id, targetChannel, targetnew.user, member.user);
         }
 
     } catch (error) {

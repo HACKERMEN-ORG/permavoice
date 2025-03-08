@@ -1,6 +1,8 @@
 const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, GuildChannel } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
+const auditLogger = require('../../methods/auditLogger');
+
 
 // Import the submod manager correctly
 let submodManager;
@@ -65,6 +67,9 @@ module.exports = {
         else {
             targetnew.voice.disconnect();
             await interaction.reply({ content: `<@${target}> has been kicked from the channel.`, ephemeral: true });
+                          // Log the kick action
+              const targetChannel = guild.channels.cache.get(currentChannel);
+              auditLogger.logUserKick(guild.id, targetChannel, targetnew.user, member.user);
         }
 
     } catch (error) {

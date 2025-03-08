@@ -2,6 +2,8 @@ const { SlashCommandBuilder } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 const { removeMutedUser, isUserMuted } = require('../../methods/channelMutes');
+const auditLogger = require('../../methods/auditLogger');
+
 
 // Import the submod manager correctly
 let submodManager;
@@ -58,6 +60,9 @@ module.exports = {
       // This is critical so the voice state handler respects this action
       removeMutedUser(currentChannel, targetUser.id);
       console.log(`Unmuting ${targetUser.id} in channel ${currentChannel} (command)`);
+      // Log the unmute action
+const targetChannel = guild.channels.cache.get(currentChannel);
+auditLogger.logUserUnmute(guild.id, targetChannel, targetUser, member.user);
       
       try {
         // Fetch the target member
@@ -69,6 +74,9 @@ module.exports = {
             // Unmute the user in this channel
             await targetMember.voice.setMute(false, 'Channel moderation unmuted user');
             console.log(`Successfully unmuted ${targetUser.id} via command`);
+            // Log the unmute action
+              const targetChannel = guild.channels.cache.get(currentChannel);
+              auditLogger.logUserUnmute(guild.id, targetChannel, targetUser, member.user);
           } catch (muteError) {
             console.error('Error unmuting user:', muteError);
             // Continue anyway - the user is tracked as unmuted in our system

@@ -1,6 +1,7 @@
 const { Client, SlashCommandBuilder, PermissionsBitField, ChannelType, GuildChannel } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
+const auditLogger = require('../../methods/auditLogger');
 
 // Import the submod manager correctly
 let submodManager;
@@ -61,7 +62,8 @@ module.exports = {
         targetChannel.permissionOverwrites.delete(target);
 
         await interaction.reply({ content: `<@${target}> has been unbanned from the channel.`, ephemeral: true });
-        
+        // Log the unban action
+        auditLogger.logUserUnban(guild.id, targetChannel, targetnew.user, member.user);
 
     } catch (error) {
       await interaction.reply({ content:`There was an error while using the command.`, ephemeral: true });

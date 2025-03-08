@@ -14,6 +14,8 @@ const channelState = require('./methods/channelState');
 const { isUserMuted, clearChannelMutes, hasExplicitAction, getExplicitAction, addMutedUser, removeMutedUser } = require('./methods/channelMutes');
 const reminderSystem = require('./methods/reminderSystem');
 const channelNameManager = require('./methods/customChannelNames');
+const auditLogger = require('./methods/auditLogger');
+
 
 // Import the submod manager
 let submodManager;
@@ -163,6 +165,9 @@ for (const folder of commandFolders) {
 // Then modify the client.once(Events.ClientReady) event to load data:
 client.once(Events.ClientReady, async readyClient => {
   console.log(`Ready! Logged in as ${readyClient.user.tag}`);
+
+  auditLogger.init(readyClient);
+  console.log('Audit logger initialized');
 
   // Try to load submods data if the module exists
   if (submodManager && typeof submodManager.loadSubmodsData === 'function') {

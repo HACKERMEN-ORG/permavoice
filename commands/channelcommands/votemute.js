@@ -2,6 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 const { addMutedUser, removeMutedUser, isUserMuted } = require('../../methods/channelMutes');
+const auditLogger = require('../../methods/auditLogger');
 
 // Map to track active vote mutes to prevent spam
 const activeVoteMutes = new Map();
@@ -168,7 +169,8 @@ module.exports = {
             console.error('[MUTE ERROR] Failed to apply server mute:', muteError);
             // Even if server mute fails, the user is still tracked as muted in our system
           }
-          
+          // Log the vote mute
+auditLogger.logVoteMute(guild.id, voiceChannel, targetUser, interaction.user, true, validVoters.size);
           // 4. Clean up
           activeVoteMutes.delete(voteKey);
           
@@ -203,6 +205,8 @@ module.exports = {
           console.error('[CRITICAL ERROR] Mute execution failed:', error);
         }
       }
+
+      
       
       // ===== VOTE FAILURE FUNCTION =====
       async function failVote() {
