@@ -76,26 +76,37 @@ module.exports = {
         return await interaction.editReply({ content: 'There need to be at least 3 people in the channel to start a vote mute.' });
       }
       
-      // Get all eligible voters (everyone except the target)
-      const eligibleVoters = voiceChannel.members.filter(m => m.id !== targetUser.id);
-      const totalEligibleVoters = eligibleVoters.size;
+      // ===== CALCULATE VOTE REQUIREMENTS =====
+      // Get all eligible voters (everyone except the target) at the START
+      const initialEligibleVoters = voiceChannel.members.filter(m => m.id !== targetUser.id);
+      const initialEligibleVoterCount = initialEligibleVoters.size;
       
-      // Calculate required votes - MAJORITY of eligible voters
-      const actualRequiredVotes = Math.ceil(totalEligibleVoters / 2);
+      // Store the IDs of eligible voters at the start of the vote
+      // This ensures that only people present at the beginning can vote
+      const initialEligibleVoterIds = new Set(
+        initialEligibleVoters.map(m => m.id)
+      );
+      
+      // Calculate required votes - MAJORITY of initial eligible voters
+      const requiredVotes = Math.ceil(initialEligibleVoterCount / 2);
       
       // For display purposes, if there are only 2 eligible voters (3 people total including target),
       // we want the embed to say 3 votes are required (as requested by user)
-      const displayRequiredVotes = totalEligibleVoters === 2 ? 3 : actualRequiredVotes + 1;
+      const displayRequiredVotes = initialEligibleVoterCount === 2 ? 3 : requiredVotes + 1;
       
-      console.log(`Starting vote mute against ${targetUser.tag} in channel ${currentChannel}`);
-      console.log(`Total eligible voters: ${totalEligibleVoters}, Required votes: ${actualRequiredVotes}`);
-      console.log(`Display required votes: ${displayRequiredVotes}`);
+      console.log(`[START] Vote mute against ${targetUser.tag} in channel ${currentChannel}`);
+      console.log(`[INITIAL] ${initialEligibleVoterCount} eligible voters, ${requiredVotes} votes required`);
+      console.log(`[DISPLAY] ${displayRequiredVotes} votes shown to users (including bot's vote)`);
+      console.log(`[ELIGIBLE VOTERS] ${Array.from(initialEligibleVoterIds).join(', ')}`);
       
       // Explicitly track vote status
       let voteStatus = {
         completed: false,
         muted: false,
-        startTime: Date.now()
+        startTime: Date.now(),
+        initialRequiredVotes: requiredVotes, // Store the initial required votes
+        initialEligibleVoterIds: initialEligibleVoterIds, // Store who can vote
+        initialEligibleVoterCount: initialEligibleVoterCount // Store how many can vote
       };
       
       // Register in active votes map
@@ -120,7 +131,7 @@ module.exports = {
       async function muteTarget() {
         // Ensure we only mute once
         if (voteStatus.muted) {
-          console.log('User already muted, skipping duplicate mute');
+          console.log('[DUPLICATE] User already muted, skipping');
           return;
         }
         
@@ -197,7 +208,7 @@ module.exports = {
       async function failVote() {
         // Only fail if not already completed
         if (voteStatus.completed) {
-          console.log('Vote already completed, not displaying failure message');
+          console.log('[DUPLICATE] Vote already completed, not showing failure');
           return;
         }
         
@@ -249,24 +260,22 @@ module.exports = {
             return false;
           }
           
-          // Filter valid votes
+          // Filter valid votes - IMPORTANT: Only count votes from users who were
+          // eligible to vote at the start of the vote, even if they've since left
           const validVoters = users.filter(u => 
             u.id !== interaction.client.user.id && // Not the bot
             u.id !== targetUser.id && // Not the target
-            currentVoiceChannel.members.has(u.id) // In the channel
+            voteStatus.initialEligibleVoterIds.has(u.id) // Was an eligible voter at start
           );
-          
-          // Get current required votes based on who's in the channel now
-          const currentEligibleVoters = currentVoiceChannel.members.filter(m => m.id !== targetUser.id).size;
-          const currentRequiredVotes = Math.ceil(currentEligibleVoters / 2);
           
           // Log vote status
           const voterNames = validVoters.map(u => u.username).join(', ');
-          console.log(`[VOTE STATUS] ${validVoters.size}/${currentRequiredVotes} votes`);
+          console.log(`[VOTE STATUS] ${validVoters.size}/${voteStatus.initialRequiredVotes} votes`);
           console.log(`[VOTERS] ${voterNames || 'None'}`);
           
-          // Return if threshold is met
-          return validVoters.size >= currentRequiredVotes;
+          // IMPORTANT: Compare against the INITIAL required votes
+          // This ensures that people leaving doesn't change the vote requirement
+          return validVoters.size >= voteStatus.initialRequiredVotes;
         } catch (error) {
           console.error('[CHECK VOTES ERROR]', error);
           return false;
