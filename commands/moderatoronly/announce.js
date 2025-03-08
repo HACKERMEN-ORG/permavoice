@@ -126,6 +126,10 @@ module.exports = {
                 .addStringOption(option =>
                     option.setName('footer')
                         .setDescription('Optional footer text for the announcement')
+                        .setRequired(false))
+                .addBooleanOption(option => 
+                    option.setName('anonymous')
+                        .setDescription('Whether to hide who posted the announcement (default: false)')
                         .setRequired(false)))
         .addSubcommand(subcommand =>
             subcommand
@@ -203,6 +207,7 @@ module.exports = {
                 const color = interaction.options.getString('color') || '#FF5500'; // Default color is the same as other bot embeds
                 const imageUrl = interaction.options.getString('image');
                 const footer = interaction.options.getString('footer');
+                const anonymous = interaction.options.getBoolean('anonymous') || false;
                 
                 // Create the embed
                 const embed = new EmbedBuilder()
@@ -221,17 +226,19 @@ module.exports = {
                     embed.setFooter({ text: footer });
                 }
                 
-                // Add author information
-                embed.setAuthor({
-                    name: interaction.user.username,
-                    iconURL: interaction.user.displayAvatarURL({ dynamic: true })
-                });
+                // Add author information only if not anonymous
+                if (!anonymous) {
+                    embed.setAuthor({
+                        name: interaction.user.username,
+                        iconURL: interaction.user.displayAvatarURL({ dynamic: true })
+                    });
+                }
                 
                 // Send the announcement
                 await channel.send({ embeds: [embed] });
                 
                 return interaction.editReply({
-                    content: `Announcement successfully sent to ${channel}.`,
+                    content: `Announcement successfully sent to ${channel}${anonymous ? ' anonymously' : ''}.`,
                 });
             } catch (error) {
                 console.error('Error sending announcement:', error);
