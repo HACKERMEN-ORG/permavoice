@@ -11,7 +11,7 @@ const { channel } = require('node:diagnostics_channel');
 const { waitingRoom } = require('./methods/waitingRoom');
 const Settings  = require('./Settings');
 const channelState = require('./methods/channelState');
-const { isUserMuted, clearChannelMutes, hasExplicitAction, getExplicitAction } = require('./methods/channelMutes');
+const { isUserMuted, clearChannelMutes, hasExplicitAction, getExplicitAction, addMutedUser, removeMutedUser } = require('./methods/channelMutes');
 
 // Import the submod manager
 let submodManager;
@@ -220,7 +220,20 @@ client.on('voiceStateUpdate', (oldState, newState) => {
             return;
         }
 
-        // Check if user is in a temporary channel they should be muted in
+        // Check if the user was just muted (not muted before, but muted now)
+        const wasJustMuted = oldState.serverMute === false && newState.serverMute === true;
+        
+        // If the user was just muted, check if it was done by an admin
+        // by not automatically unmuting them and respecting the server mute
+        if (wasJustMuted) {
+            // Add them to our internal mute list to track this server mute
+            // This prevents the bot from automatically unmuting them
+            addMutedUser(channelId, userId);
+            console.log(`User ${userId} was server muted in channel ${channelId}, adding to mute list`);
+            return;
+        }
+        
+        // Normal mute handling for non-admin mutes
         const shouldBeMuted = isUserMuted(channelId, userId);
 
         // Apply correct mute state
@@ -235,12 +248,36 @@ client.on('voiceStateUpdate', (oldState, newState) => {
             }
         } else if (!shouldBeMuted && newState.member.voice.serverMute) {
             // Shouldn't be muted but is - this handles users moving between channels
-            console.log(`User ${userId} is incorrectly muted in channel ${channelId}, unmuting`);
+            // IMPORTANT: Check if this might be an admin-applied mute before unmuting
             try {
-                newState.member.voice.setMute(false, 'Removing incorrect mute')
-                    .catch(error => console.error('Error removing incorrect mute:', error));
+                // Try to get audit logs to check if this was an admin mute
+                guild.fetchAuditLogs({
+                    type: 24, // SERVER_MEMBER_UPDATE
+                    limit: 1
+                }).then(auditLogs => {
+                    const recentMute = auditLogs.entries.first();
+                    // Check if this is a recent mute action (within the last 5 seconds)
+                    const isRecentAction = recentMute && 
+                        (Date.now() - recentMute.createdTimestamp < 5000) && 
+                        recentMute.target.id === userId;
+                        
+                    if (isRecentAction) {
+                        // This was likely an admin mute, add to our tracked mutes
+                        addMutedUser(channelId, userId);
+                        console.log(`Recent admin mute detected for ${userId}, respecting it`);
+                    } else {
+                        // Not an admin mute or not recent, proceed with unmute
+                        console.log(`User ${userId} is incorrectly muted in channel ${channelId}, unmuting`);
+                        newState.member.voice.setMute(false, 'Removing incorrect mute')
+                            .catch(error => console.error('Error removing incorrect mute:', error));
+                    }
+                }).catch(error => {
+                    console.error('Error fetching audit logs:', error);
+                    // If we can't check audit logs, err on the side of respecting the mute
+                    addMutedUser(channelId, userId);
+                });
             } catch (error) {
-                console.error('Error removing incorrect mute:', error);
+                console.error('Error in mute verification:', error);
             }
         }
     }
