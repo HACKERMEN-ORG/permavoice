@@ -3,15 +3,16 @@ require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 const { getMutedUsers } = require('../../methods/channelMutes');
 
-// Import the submod functions if they exist
-let isSubmod;
+// Import the submod manager correctly
+let submodManager;
 try {
-  const submodModule = require('./submod');
-  isSubmod = submodModule.isSubmod;
+  submodManager = require('../../methods/submodmanager');
 } catch (error) {
-  // Create placeholder function
-  isSubmod = () => false;
-  console.log('Submod module not available for listmuted command.');
+  console.error('Error importing submodmanager:', error);
+  // Create a placeholder if module doesn't exist yet
+  submodManager = {
+    isSubmod: () => false
+  };
 }
 
 module.exports = {
@@ -35,7 +36,7 @@ module.exports = {
     }
 
     // Check if the user is the owner of the channel or a submoderator
-    if (channelOwners.get(currentChannel) !== member.id && !isSubmod(currentChannel, member.id)) {
+    if (channelOwners.get(currentChannel) !== member.id && !submodManager.isSubmod(currentChannel, member.id)) {
       return interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: true });
     }
 

@@ -2,15 +2,16 @@ const { Client, SlashCommandBuilder, PermissionsBitField, ChannelType, GuildChan
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 
-// Import the submod functions if they exist
-let isSubmod;
+// Import the submod manager correctly
+let submodManager;
 try {
-  const submodModule = require('../channelcommands/submod');
-  isSubmod = submodModule.isSubmod;
+  submodManager = require('../../methods/submodmanager');
 } catch (error) {
-  // Create placeholder function
-  isSubmod = () => false;
-  console.log('Submod module not available for ban command.');
+  console.error('Error importing submodmanager:', error);
+  // Create a placeholder if module doesn't exist yet
+  submodManager = {
+    isSubmod: () => false
+  };
 }
 
 module.exports = {
@@ -28,7 +29,8 @@ module.exports = {
     const member = await interaction.guild.members.fetch(interaction.user.id);
     if (!member.voice.channel) {
       return interaction.reply({ content: 'You must be in a voice channel to use this command.', ephemeral: true });
-  }
+    }
+    
     const currentChannel = member.voice.channel.id;
     const target = interaction.options.getUser('target').id;
     const targetnew = guild.members.cache.get(target);
@@ -38,9 +40,9 @@ module.exports = {
         return interaction.reply({ content: 'You must be in a owned channel.', ephemeral: true });
     }
 
-    //Check if the user is the owner of the channel or a submoderator
-    if (channelOwners.get(currentChannel) !== member.id && !isSubmod(currentChannel, member.id)) {
-        return interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: true });
+    //Check if the user is the owner of the channel - SUBMODS CANNOT BAN
+    if (channelOwners.get(currentChannel) !== member.id) {
+        return interaction.reply({ content: 'You do not have permission to use this command. Only channel owners can ban users.', ephemeral: true });
     }
 
     //Prevent the user from banning themselves
@@ -53,11 +55,8 @@ module.exports = {
         return interaction.reply({ content: 'You cannot ban the channel owner.', ephemeral: true });
     }
 
-    //Prevent submoderators from banning other submoderators
-    if (isSubmod(currentChannel, target) && channelOwners.get(currentChannel) !== member.id) {
-        return interaction.reply({ content: 'Submoderators cannot ban other submoderators. Only the channel owner can do that.', ephemeral: true });
-    }
-
+    //Prevent submoderators from banning other submoderators - no longer needed since submods can't ban
+    
     //Prevent the user from banning this bot from the channel
     if (target === interaction.client.user.id) {
         return interaction.reply({ content: 'You cannot ban me from the channel.', ephemeral: true });
