@@ -80,11 +80,14 @@ module.exports = {
       const eligibleVoters = voiceChannel.members.filter(m => m.id !== targetUser.id);
       const totalEligibleVoters = eligibleVoters.size;
       
-      // Calculate required votes - 50% of eligible voters required (rounded up)
+      // Calculate required votes - MAJORITY + 1 (to include bot's fake vote)
+      // For UI/UX purposes, we're showing one more vote because the bot's reaction shows up but doesn't count
       const requiredVotes = Math.ceil(totalEligibleVoters / 2);
+      const displayRequiredVotes = requiredVotes + 1; // Add 1 for the bot's vote that users see but doesn't count
       
       console.log(`Starting vote mute against ${targetUser.tag} in channel ${currentChannel}`);
-      console.log(`Required votes: ${requiredVotes} out of ${totalEligibleVoters} eligible voters`);
+      console.log(`Real required votes: ${requiredVotes} out of ${totalEligibleVoters} eligible voters`);
+      console.log(`Display required votes: ${displayRequiredVotes} (including bot's vote for UI purposes)`);
       
       // Create vote embed
       const voteEmbed = new EmbedBuilder()
@@ -105,23 +108,19 @@ module.exports = {
         inProgress: true
       });
       
-      // ----------------------
-      // MANUAL REACTION CHECK
-      // ----------------------
-      
-      // This is the key to fixing the issue - we'll manually poll for reactions
-      // instead of relying on the collector events
-
       // Set up a variable to track if mute has been executed
       let muteExecuted = false;
       
       // Function to execute the mute
       async function executeMute() {
         // Prevent double execution
-        if (muteExecuted) return;
-        muteExecuted = true;
+        if (muteExecuted) {
+          console.log('Mute already executed, skipping...');
+          return;
+        }
         
-        console.log(`EXECUTING MUTE for ${targetUser.tag}`);
+        muteExecuted = true;
+        console.log(`EXECUTING MUTE NOW for ${targetUser.tag}`);
         
         try {
           // Update the embed to show vote passed
@@ -208,13 +207,12 @@ module.exports = {
       }
       
       // MANUAL REACTION CHECKING LOOP
-      // This is the key change - we'll check reactions on a regular interval
-      // rather than relying on events which might be delayed or unreliable
+      // Poll every 250ms - faster to detect votes quicker
       
       // Store the interval ID so we can clear it
       let checkInterval = null;
       
-      // Set up a manual check of reactions every 500ms
+      // Set up a manual check of reactions
       checkInterval = setInterval(async () => {
         try {
           // Skip if mute already executed
@@ -243,18 +241,24 @@ module.exports = {
             return endWithFailedVote();
           }
           
-          // Filter to valid voters
+          // Filter to valid voters - excluding the bot and target
           const validVoters = users.filter(u => 
             u.id !== interaction.client.user.id && // Not the bot
             u.id !== targetUser.id && // Not the target
             currentVoiceChannel.members.has(u.id) // In the voice channel
           );
           
+          // Get the user IDs for logging
+          const voterIds = validVoters.map(u => u.id);
+          
           // Calculate current requirements
           const currentEligibleVoters = currentVoiceChannel.members.filter(m => m.id !== targetUser.id).size;
           const currentRequiredVotes = Math.ceil(currentEligibleVoters / 2);
+          const displayRequired = currentRequiredVotes + 1; // For display purposes
           
+          // Log detailed vote information
           console.log(`Current vote count: ${validVoters.size}/${currentRequiredVotes} [Required: ${currentRequiredVotes}]`);
+          console.log(`Voters: ${voterIds.join(', ')}`);
           
           // Update the embed with current vote count
           if (!muteExecuted) {
@@ -270,18 +274,19 @@ module.exports = {
           
           // CHECK IF THRESHOLD MET - THIS IS THE CRITICAL PART
           if (validVoters.size >= currentRequiredVotes) {
-            console.log(`THRESHOLD MET! ${validVoters.size}/${currentRequiredVotes} - Executing mute immediately`);
+            console.log(`VOTE THRESHOLD MET! ${validVoters.size}/${currentRequiredVotes} - Executing mute IMMEDIATELY`);
+            console.log(`Voters who triggered the mute: ${voterIds.join(', ')}`);
             
             // Stop checking
             clearInterval(checkInterval);
             
-            // Execute the mute
-            await executeMute();
+            // Execute the mute IMMEDIATELY - this is critical, we do it right away
+            executeMute();
           }
         } catch (error) {
           console.error('Error in reaction check interval:', error);
         }
-      }, 500); // Check every 500ms
+      }, 250); // Check every 250ms - faster checks for better responsiveness
       
       // Set timeout to end the vote after 20 seconds
       setTimeout(() => {
