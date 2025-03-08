@@ -368,67 +368,99 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 // Handle joining the create channel
 if (newState.channelId && newState.channelId === settings.voiceChannelId) {
     try {
-        const category = guild.channels.cache.get(settings.category);
-        if (category && category.type === ChannelType.GuildCategory) {
-            guild.channels.create({
-                name: `${newState.member.user.username}'s Channel`,
-                type: ChannelType.GuildVoice,
-                parent: category.id,
-                permissionOverwrites: [
-                    {
-                        id: newState.member.id,
-                        // Removed ManageChannels permission - only basic voice permissions
-                        allow: [PermissionFlagsBits.Connect, PermissionFlagsBits.Speak, PermissionFlagsBits.ViewChannel],
-                    },
-                ],
-            })
-            .then(channel => {
-                // Move the user to the new channel
-                newState.member.voice.setChannel(channel)
-                    .then(() => {
-                        // Explicitly ensure the user is unmuted in their new channel
-                        setTimeout(() => {
-                            try {
-                                if (newState.member.voice.channel && newState.member.voice.channel.id === channel.id) {
-                                    newState.member.voice.setMute(false, 'New channel owner unmute')
-                                        .catch(error => console.error('Error unmuting channel owner:', error));
+        const userId = newState.member.id;
+        
+        // Check if the user already owns a channel
+        let userAlreadyOwnsChannel = false;
+        for (const [channelId, ownerId] of channelOwners.entries()) {
+            if (ownerId === userId) {
+                userAlreadyOwnsChannel = true;
+                
+                // Get the existing channel
+                const existingChannel = guild.channels.cache.get(channelId);
+                
+                // If the existing channel exists, move the user back to it
+                if (existingChannel) {
+                    console.log(`User ${userId} already owns channel ${channelId}, moving them back to it`);
+                    
+                    // Move them to their existing channel
+                    newState.member.voice.setChannel(existingChannel)
+                        .then(() => {
+                            // Notify the user they already have a channel
+                            existingChannel.send(`${newState.member.toString()}, you already have an active voice channel. You've been moved back to it.`);
+                        })
+                        .catch(error => console.error('Error moving user back to existing channel:', error));
+                    
+                    // Exit the function early to prevent creating a new channel
+                    return;
+                } else {
+                    // If the channel doesn't exist (was deleted), remove the stale entry
+                    console.log(`Removing stale channel owner entry for user ${userId}, channel ${channelId}`);
+                    channelOwners.delete(channelId);
+                    userAlreadyOwnsChannel = false;
+                }
+                
+                break;
+            }
+        }
+        
+        // Only proceed with channel creation if they don't already own one
+        if (!userAlreadyOwnsChannel) {
+            const category = guild.channels.cache.get(settings.category);
+            if (category && category.type === ChannelType.GuildCategory) {
+                guild.channels.create({
+                    name: `${newState.member.user.username}'s Channel`,
+                    type: ChannelType.GuildVoice,
+                    parent: category.id,
+                    permissionOverwrites: [
+                        {
+                            id: newState.member.id,
+                            // Removed ManageChannels permission - only basic voice permissions
+                            allow: [PermissionFlagsBits.Connect, PermissionFlagsBits.Speak, PermissionFlagsBits.ViewChannel],
+                        },
+                    ],
+                })
+                .then(channel => {
+                    // Move the user to the new channel
+                    newState.member.voice.setChannel(channel)
+                        .then(() => {
+                            // Explicitly ensure the user is unmuted in their new channel
+                            setTimeout(() => {
+                                try {
+                                    if (newState.member.voice.channel && newState.member.voice.channel.id === channel.id) {
+                                        newState.member.voice.setMute(false, 'New channel owner unmute')
+                                            .catch(error => console.error('Error unmuting channel owner:', error));
+                                    }
+                                } catch (error) {
+                                    console.error('Error in delayed owner unmute:', error);
                                 }
-                            } catch (error) {
-                                console.error('Error in delayed owner unmute:', error);
-                            }
-                        }, 1000);
-                    })
-                    .catch(error => console.error('Error moving user to new channel:', error));
+                            }, 1000);
+                        })
+                        .catch(error => console.error('Error moving user to new channel:', error));
 
-                console.log(`Created voice channel: ${channel.name}`);
+                    console.log(`Created voice channel: ${channel.name}`);
 
-                // Set the owner of the channel to the user who created the channel
-                channelOwners.set(channel.id, newState.member.id);
+                    // Set the owner of the channel to the user who created the channel
+                    channelOwners.set(channel.id, newState.member.id);
 
-                // Set the channel's private state to false, this can be adjusted by the user toggling the channel's visibility via /private
-                togglePrivate.set(channel.id, 0);
+                    // Set the channel's private state to false, this can be adjusted by the user toggling the channel's visibility via /private
+                    togglePrivate.set(channel.id, 0);
 
-                // Set the channel's lock state to false, this can be adjusted by the user toggling the channel's lock state via /lock
-                toggleLock.set(channel.id, 0);
+                    // Set the channel's lock state to false, this can be adjusted by the user toggling the channel's lock state via /lock
+                    toggleLock.set(channel.id, 0);
 
-                const embed = new EmbedBuilder()
-                    .setTitle("🎮 **Voice Channel Controls**")
-                    .setDescription("**🔸 Welcome to your custom voice channel! 🔸**\n\n**Owner Commands:**\n`/mute` - Mute a user in your channel\n`/unmute` - Unmute a user in your channel\n`/kick` - Kick a user from the channel\n`/ban` - Ban a user from your channel\n`/unban` - Unban a user from your channel\n`/listmuted` - View all muted users\n`/listbanned` - View all banned users\n`/submod` - Add a submoderator to the channel\n`/unsubmod` - Remove a submoderator\n`/listsubmods` - View all submoderators\n\n**⚠️ For Everyone: Dealing with Disruptive Users ⚠️**\n`/votemute` - Anyone can start a vote to mute a disruptive member for 5 minutes\n\n**⭐ Remember: Anyone can create their own voice room by joining the '+ CREATE' channel! ⭐**")
-                    .setColor("#FF5500")
-                    .setTimestamp();
+                    const embed = new EmbedBuilder()
+                        .setTitle("🎮 **Voice Channel Controls**")
+                        .setDescription("**🔸 Welcome to your custom voice channel! 🔸**\n\n**Owner Commands:**\n`/mute` - Mute a user in your channel\n`/unmute` - Unmute a user in your channel\n`/kick` - Kick a user from the channel\n`/ban` - Ban a user from your channel\n`/unban` - Unban a user from your channel\n`/listmuted` - View all muted users\n`/listbanned` - View all banned users\n`/submod` - Add a submoderator to the channel\n`/unsubmod` - Remove a submoderator\n`/listsubmods` - View all submoderators\n\n**⚠️ For Everyone: Dealing with Disruptive Users ⚠️**\n`/votemute` - Anyone can start a vote to mute a disruptive member for 5 minutes\n\n**⭐ Remember: Anyone can create their own voice room by joining the '+ CREATE' channel! ⭐**")
+                        .setColor("#FF5500")
+                        .setTimestamp();
 
-                const actionRow = new ActionRowBuilder()
-                    .addComponents(
-                        new ButtonBuilder()
-                            .setCustomId('button_id')
-                            .setLabel('Click Me')
-                            .setStyle(ButtonStyle.Primary)
-                    );
-                channel.send({ content: '', embeds: [embed] });
-            })
-            .catch(error => {
-                console.error('Error creating voice channel:', error);
-            });
+                    channel.send({ content: '', embeds: [embed] });
+                })
+                .catch(error => {
+                    console.error('Error creating voice channel:', error);
+                });
+            }
         }
     } catch (error) {
         console.error("Error handling create channel join:", error);
