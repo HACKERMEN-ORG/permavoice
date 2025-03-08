@@ -80,13 +80,13 @@ module.exports = {
         return await interaction.editReply({ content: 'There need to be at least 3 people in the channel to start a vote mute.' });
       }
       
-      // Calculate required votes - CHANGED: now only 50% of eligible voters required (rounded up)
+      // Calculate required votes - 50% of eligible voters required (rounded up)
       const requiredVotes = Math.ceil(totalEligibleVoters / 2);
       
       // Create vote embed
       const voteEmbed = new EmbedBuilder()
         .setTitle('Vote Mute')
-        .setDescription(`${requiredVotes + 1} votes required to mute ${targetUser.toString()}\nVote ends in 30 seconds`)
+        .setDescription(`${requiredVotes} votes required to mute ${targetUser.toString()}\nVote ends in 20 seconds`)
         .setColor('#FF0000')
         .setFooter({ text: 'React with 👍 to vote' })
         .setTimestamp();
@@ -100,14 +100,21 @@ module.exports = {
       // Fetch the message to ensure we have access to the reaction
       const fetchedMessage = await interaction.fetchReply();
       
-      // The vote will last for 30 seconds or until enough votes are collected
+      // The vote will last for 20 seconds or until enough votes are collected
       const collector = fetchedMessage.createReactionCollector({
-        time: 30000,
+        time: 20000, // Changed from 30000 to 20000 (20 seconds)
         dispose: true // Make sure we handle reaction removals
       });
       
+      // Track this vote in the active votes map
+      activeVoteMutes.set(voteKey, { 
+        initiator: member.id, 
+        target: targetUser.id,
+        message: fetchedMessage,
+        collector: collector
+      });
 
-      // Function to count valid votes
+      // Function to count valid votes and check if we've reached the threshold
       async function countValidVotes(reaction) {
         // Get fresh data about who's in the voice channel
         const freshVoiceChannel = guild.channels.cache.get(currentChannel);
@@ -126,23 +133,11 @@ module.exports = {
         // Log the votes being counted
         console.log(`Valid votes: ${validVotes.size}, Required: ${requiredVotes}`);
         
-        if(validVotes.size >= requiredVotes){
-            collector.stop('Required Votes Surpassed');
-        }
-
         return validVotes.size;
       }
-
-      // Track this vote in the active votes map
-      activeVoteMutes.set(voteKey, { 
-        initiator: member.id, 
-        target: targetUser.id,
-        message: fetchedMessage,
-        collector: collector
-      });
       
       // Function to update the embed with current vote count
-      async function updateEmbed(validVotes, reaction) {
+      async function updateEmbed(validVotes) {
         // Get fresh data about who's in the voice channel
         const freshVoiceChannel = guild.channels.cache.get(currentChannel);
         const currentVoiceMembers = freshVoiceChannel?.members || new Map();
@@ -151,22 +146,16 @@ module.exports = {
         // Recalculate required votes if people left
         const currentRequiredVotes = Math.ceil(currentEligibleVoters / 2);
         
-        // For display purposes
-        const displayVoteCount = validVotes;
-        
         // Update the embed with current vote count
-        voteEmbed.setDescription(`${displayVoteCount}/${currentEligibleVoters} votes to mute ${targetUser.toString()} (need ${currentRequiredVotes})`);
+        voteEmbed.setDescription(`${validVotes}/${currentEligibleVoters} votes to mute ${targetUser.toString()} (need ${currentRequiredVotes})`);
         await fetchedMessage.edit({ embeds: [voteEmbed] });
         
-        console.log(`Updated embed - Valid Votes: ${validVotes}/${currentRequiredVotes}, Display: ${displayVoteCount}/${currentEligibleVoters}`);
+        console.log(`Updated embed - Valid Votes: ${validVotes}/${currentRequiredVotes}`);
         
-        // End vote if we meet the required threshold
-        if (validVotes >= currentRequiredVotes) {
-          console.log(`Required votes met: ${validVotes}/${currentRequiredVotes}. Stopping collector from updateEmbed.`);
-          collector.stop('success');
-        }
+        // Return whether we've met the required threshold
+        return validVotes >= currentRequiredVotes;
       }
-      
+
       // When reactions are collected
       collector.on('collect', async (reaction, user) => {
         if (reaction.emoji.name === '👍') {
@@ -176,20 +165,12 @@ module.exports = {
             // Count valid votes
             const validVotes = await countValidVotes(reaction);
             
-            // Get fresh data about who's in the voice channel
-            const freshVoiceChannel = guild.channels.cache.get(currentChannel);
-            const currentVoiceMembers = freshVoiceChannel?.members || new Map();
-            const currentEligibleVoters = currentVoiceMembers.filter(m => m.id !== targetUser.id).size;
-            
-            // Recalculate required votes if people left
-            const currentRequiredVotes = Math.ceil(currentEligibleVoters / 2);
-            
-            // Update the embed
-            await updateEmbed(validVotes, reaction);
+            // Update the embed and check if threshold is met
+            const thresholdMet = await updateEmbed(validVotes);
             
             // If we have enough votes, end the vote immediately
-            if (validVotes >= currentRequiredVotes) {
-              console.log(`Required votes met: ${validVotes}/${currentRequiredVotes}. Stopping collector.`);
+            if (thresholdMet) {
+              console.log(`Required votes met. Stopping collector.`);
               collector.stop('success');
             }
           } catch (error) {
@@ -205,8 +186,8 @@ module.exports = {
             // Count valid votes
             const validVotes = await countValidVotes(reaction);
             
-            // Update the embed
-            await updateEmbed(validVotes, reaction);
+            // Just update the embed, no need to stop on a removal
+            await updateEmbed(validVotes);
           } catch (error) {
             console.error('Error processing vote removal:', error);
           }
@@ -220,9 +201,9 @@ module.exports = {
         // Remove from active votes
         activeVoteMutes.delete(voteKey);
         
+        // Get one last count of votes for decision making
         let finalVotes = 0;
-        let finalEligibleVoters = 0;
-        let finalRequiredVotes = 0;
+        let thresholdMet = false;
         
         try {
           // Get fresh data
@@ -237,15 +218,19 @@ module.exports = {
             const freshVoiceChannel = guild.channels.cache.get(currentChannel);
             if (freshVoiceChannel) {
               const currentVoiceMembers = freshVoiceChannel.members;
-              finalEligibleVoters = currentVoiceMembers.filter(m => m.id !== targetUser.id).size;
-              finalRequiredVotes = Math.ceil(finalEligibleVoters / 2);
+              const finalEligibleVoters = currentVoiceMembers.filter(m => m.id !== targetUser.id).size;
+              const finalRequiredVotes = Math.ceil(finalEligibleVoters / 2);
+              
+              // Check if threshold is met
+              thresholdMet = finalVotes >= finalRequiredVotes;
             }
           }
         } catch (error) {
           console.error('Error getting final vote count:', error);
         }
         
-        if (reason === 'success' || (reason === 'time' && finalVotes >= finalRequiredVotes)) {
+        // Handle the outcome of the vote
+        if (reason === 'success' || thresholdMet) {
           // Vote passed - mute the user
           try {
             // Update embed to show vote passed
@@ -261,6 +246,7 @@ module.exports = {
               const freshTargetMember = await guild.members.fetch(targetUser.id);
               if (freshTargetMember.voice.channel && freshTargetMember.voice.channel.id === currentChannel) {
                 await freshTargetMember.voice.setMute(true, 'Vote mute');
+                console.log(`User ${targetUser.id} muted by vote`);
               }
             } catch (muteError) {
               console.error('Error muting user:', muteError);
@@ -277,6 +263,7 @@ module.exports = {
                   const updatedMember = await guild.members.fetch(targetUser.id);
                   if (updatedMember.voice.channel && updatedMember.voice.channel.id === currentChannel) {
                     await updatedMember.voice.setMute(false, 'Vote mute expired');
+                    console.log(`User ${targetUser.id} unmuted after vote mute expired`);
                   }
                 } catch (error) {
                   console.error('Error unmuting user after timeout:', error);
@@ -299,8 +286,8 @@ module.exports = {
             voteEmbed.setColor('#FF0000');
             await fetchedMessage.edit({ embeds: [voteEmbed] });
           }
-        } else if (reason === 'time') {
-          // Vote failed due to timeout
+        } else {
+          // Vote failed due to timeout or not enough votes
           voteEmbed.setDescription(`Vote failed! Not enough votes to mute ${targetUser.toString()}`);
           voteEmbed.setColor('#888888');
           await fetchedMessage.edit({ embeds: [voteEmbed] });
