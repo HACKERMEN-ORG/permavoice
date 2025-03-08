@@ -71,51 +71,22 @@ module.exports = {
       // Get all members in the voice channel
       const voiceChannel = guild.channels.cache.get(currentChannel);
       
+      // Get all voice members and exclude the target
+      const eligibleVoters = voiceChannel.members.filter(m => m.id !== targetUser.id);
+      const totalEligibleVoters = eligibleVoters.size;
+      
       // Need at least 3 people in the channel for a vote (including target)
       if (voiceChannel.members.size < 3) {
         return await interaction.editReply({ content: 'There need to be at least 3 people in the channel to start a vote mute.' });
       }
       
-      // ===== CALCULATE VOTE REQUIREMENTS =====
-      // Get all eligible voters (everyone except the target) at the START
-      const initialEligibleVoters = voiceChannel.members.filter(m => m.id !== targetUser.id);
-      const initialEligibleVoterCount = initialEligibleVoters.size;
+      // Calculate required votes - 50% of eligible voters required (rounded up)
+      const requiredVotes = Math.ceil(totalEligibleVoters / 2);
       
-      // Store the IDs of eligible voters at the start of the vote
-      // This ensures that only people present at the beginning can vote
-      const initialEligibleVoterIds = new Set(
-        initialEligibleVoters.map(m => m.id)
-      );
-      
-      // Calculate required votes - MAJORITY of initial eligible voters
-      const requiredVotes = Math.ceil(initialEligibleVoterCount / 2);
-      
-      // For display purposes, if there are only 2 eligible voters (3 people total including target),
-      // we want the embed to say 3 votes are required (as requested by user)
-      const displayRequiredVotes = initialEligibleVoterCount === 2 ? 3 : requiredVotes + 1;
-      
-      console.log(`[START] Vote mute against ${targetUser.tag} in channel ${currentChannel}`);
-      console.log(`[INITIAL] ${initialEligibleVoterCount} eligible voters, ${requiredVotes} votes required`);
-      console.log(`[DISPLAY] ${displayRequiredVotes} votes shown to users (including bot's vote)`);
-      console.log(`[ELIGIBLE VOTERS] ${Array.from(initialEligibleVoterIds).join(', ')}`);
-      
-      // Explicitly track vote status
-      let voteStatus = {
-        completed: false,
-        muted: false,
-        startTime: Date.now(),
-        initialRequiredVotes: requiredVotes, // Store the initial required votes
-        initialEligibleVoterIds: initialEligibleVoterIds, // Store who can vote
-        initialEligibleVoterCount: initialEligibleVoterCount // Store how many can vote
-      };
-      
-      // Register in active votes map
-      activeVoteMutes.set(voteKey, voteStatus);
-      
-      // Create vote embed with the display vote count
+      // Create vote embed
       const voteEmbed = new EmbedBuilder()
         .setTitle('Vote Mute')
-        .setDescription(`${displayRequiredVotes} votes required to mute ${targetUser.toString()}\nVote ends in 20 seconds`)
+        .setDescription(`${requiredVotes} votes required to mute ${targetUser.toString()}\nVote ends in 20 seconds`)
         .setColor('#FF0000')
         .setFooter({ text: 'React with 👍 to vote' })
         .setTimestamp();
@@ -123,249 +94,210 @@ module.exports = {
       // Send the vote message
       const voteMessage = await interaction.editReply({ embeds: [voteEmbed] });
       
-      // Add the initial thumbs up reaction
+      // Add the reaction for voting
       await voteMessage.react('👍');
       
-      // ===== SIMPLIFIED MUTE EXECUTION FUNCTION =====
-      // This is the critical function that actually performs the mute
-      async function muteTarget() {
-        // Ensure we only mute once
-        if (voteStatus.muted) {
-          console.log('[DUPLICATE] User already muted, skipping');
-          return;
+      // Fetch the message to ensure we have access to the reaction
+      const fetchedMessage = await interaction.fetchReply();
+      
+      // The vote will last for 20 seconds or until enough votes are collected
+      const collector = fetchedMessage.createReactionCollector({
+        time: 20000, // 20 seconds
+        dispose: true // Make sure we handle reaction removals
+      });
+
+      // Track this vote in the active votes map
+      activeVoteMutes.set(voteKey, { 
+        initiator: member.id, 
+        target: targetUser.id,
+        message: fetchedMessage,
+        collector: collector
+      });
+
+      // Function to count valid votes
+      async function countValidVotes(reaction) {
+        // Get fresh data about who's in the voice channel
+        const freshVoiceChannel = guild.channels.cache.get(currentChannel);
+        if (!freshVoiceChannel) return 0;
+        
+        const currentVoiceMembers = freshVoiceChannel.members;
+        
+        // Fetch all users who reacted
+        const reactedUsers = await reaction.users.fetch();
+        
+        // Filter valid votes: not the bot, not the target, and currently in the voice channel
+        const validVotes = reactedUsers.filter(user => 
+          user.id !== interaction.client.user.id && // Not the bot
+          user.id !== targetUser.id && // Not the target
+          currentVoiceMembers.has(user.id) // Currently in the voice channel
+        );
+        
+        return validVotes.size;
+      }
+      
+      // Function to update the embed with current vote count
+      async function updateEmbed(validVotes) {
+        // Get fresh data about who's in the voice channel
+        const freshVoiceChannel = guild.channels.cache.get(currentChannel);
+        if (!freshVoiceChannel) return;
+        
+        const currentVoiceMembers = freshVoiceChannel.members;
+        const currentEligibleVoters = currentVoiceMembers.filter(m => m.id !== targetUser.id).size;
+        
+        // Recalculate required votes if people left
+        const currentRequiredVotes = Math.ceil(currentEligibleVoters / 2);
+        
+        // Update the embed with current vote count
+        voteEmbed.setDescription(`${validVotes}/${currentEligibleVoters} votes to mute ${targetUser.toString()} (need ${currentRequiredVotes})`);
+        await fetchedMessage.edit({ embeds: [voteEmbed] });
+        
+        console.log(`Updated embed - Votes: ${validVotes}/${currentRequiredVotes}`);
+        
+        // Return the current required votes for reference
+        return currentRequiredVotes;
+      }
+
+      // When reactions are collected
+      collector.on('collect', async (reaction, user) => {
+        if (reaction.emoji.name === '👍') {
+          try {
+            console.log(`Vote collected from ${user.username}`);
+            
+            // Count valid votes
+            const validVotes = await countValidVotes(reaction);
+            
+            // Update the embed and get current required votes
+            const currentRequiredVotes = await updateEmbed(validVotes);
+            
+            // If we have enough votes, end the vote immediately
+            if (validVotes >= currentRequiredVotes) {
+              console.log(`Required votes met: ${validVotes}/${currentRequiredVotes}. Stopping collector.`);
+              collector.stop('success');
+            }
+          } catch (error) {
+            console.error('Error processing vote:', error);
+          }
         }
+      });
+      
+      // When reactions are removed
+      collector.on('remove', async (reaction, user) => {
+        if (reaction.emoji.name === '👍') {
+          try {
+            // Count valid votes
+            const validVotes = await countValidVotes(reaction);
+            
+            // Update the embed
+            await updateEmbed(validVotes);
+          } catch (error) {
+            console.error('Error processing vote removal:', error);
+          }
+        }
+      });
+      
+      // When the collection ends
+      collector.on('end', async (collected, reason) => {
+        console.log(`Vote collector ended with reason: ${reason}`);
         
-        // Set muted flag immediately to prevent race conditions
-        voteStatus.muted = true;
-        voteStatus.completed = true;
+        // Remove from active votes
+        activeVoteMutes.delete(voteKey);
         
-        console.log(`[MUTE EXECUTION] Muting ${targetUser.tag}`);
+        // Get one last count of votes for decision making
+        let finalVotes = 0;
+        let finalRequiredVotes = 0;
+        let voteSucceeded = false;
         
         try {
-          // 1. Update the embed to show success
-          const successEmbed = new EmbedBuilder()
-            .setTitle('Vote Mute')
-            .setDescription(`Vote passed! ${targetUser.toString()} has been muted for 5 minutes`)
-            .setColor('#00FF00')
-            .setTimestamp();
+          // Get fresh data
+          const finalMessage = await interaction.fetchReply();
+          const thumbsUpReaction = finalMessage.reactions.cache.get('👍');
           
-          await interaction.editReply({ embeds: [successEmbed] });
-          
-          // 2. Add to our mute tracking
-          addMutedUser(currentChannel, targetUser.id);
-          
-          // 3. Actually mute the user
-          try {
-            const freshTarget = await guild.members.fetch(targetUser.id);
-            if (freshTarget.voice.channel && freshTarget.voice.channel.id === currentChannel) {
-              await freshTarget.voice.setMute(true, 'Vote mute');
-              console.log(`[MUTE SUCCESS] Server mute applied to ${targetUser.tag}`);
+          if (thumbsUpReaction) {
+            // Count valid votes one last time
+            finalVotes = await countValidVotes(thumbsUpReaction);
+            
+            // Get fresh voice channel data
+            const freshVoiceChannel = guild.channels.cache.get(currentChannel);
+            if (freshVoiceChannel) {
+              const currentVoiceMembers = freshVoiceChannel.members;
+              const finalEligibleVoters = currentVoiceMembers.filter(m => m.id !== targetUser.id).size;
+              finalRequiredVotes = Math.ceil(finalEligibleVoters / 2);
               
-              // Announce successful mute
-              await voiceChannel.send(`${targetUser.toString()} has been muted for 5 minutes by vote.`);
+              // Check if threshold is met
+              voteSucceeded = finalVotes >= finalRequiredVotes;
             }
-          } catch (muteError) {
-            console.error('[MUTE ERROR] Failed to apply server mute:', muteError);
-            // Even if server mute fails, the user is still tracked as muted in our system
           }
-          
-          // 4. Clean up
-          activeVoteMutes.delete(voteKey);
-          
-          // 5. Set unmute timer
-          setTimeout(async () => {
+        } catch (error) {
+          console.error('Error getting final vote count:', error);
+        }
+        
+        // Handle the outcome of the vote
+        if (reason === 'success' || voteSucceeded) {
+          // Vote passed - mute the user
+          try {
+            // Update embed to show vote passed
+            voteEmbed.setDescription(`Vote passed! ${targetUser.toString()} has been muted for 5 minutes`);
+            voteEmbed.setColor('#00FF00');
+            await fetchedMessage.edit({ embeds: [voteEmbed] });
+            
+            // Apply the mute
+            addMutedUser(currentChannel, targetUser.id);
+            
+            // Mute the user if they're still in the channel
             try {
-              // Check if still muted
+              const freshTargetMember = await guild.members.fetch(targetUser.id);
+              if (freshTargetMember.voice.channel && freshTargetMember.voice.channel.id === currentChannel) {
+                await freshTargetMember.voice.setMute(true, 'Vote mute');
+                console.log(`User ${targetUser.id} muted by vote`);
+              }
+            } catch (muteError) {
+              console.error('Error muting user:', muteError);
+            }
+            
+            // Set a timeout to unmute after 5 minutes
+            setTimeout(async () => {
+              // Check if the user is still muted before attempting to unmute
               if (isUserMuted(currentChannel, targetUser.id)) {
-                console.log(`[UNMUTE] Auto-unmuting ${targetUser.tag} after 5 minutes`);
-                
-                // Remove from tracking
                 removeMutedUser(currentChannel, targetUser.id);
                 
-                // Try to unmute if still in channel
+                // Try to unmute if they're still in the channel
                 try {
-                  const unmuteTarget = await guild.members.fetch(targetUser.id);
-                  if (unmuteTarget.voice.channel && unmuteTarget.voice.channel.id === currentChannel) {
-                    await unmuteTarget.voice.setMute(false, 'Vote mute expired');
-                    
-                    // Notify channel
-                    await voiceChannel.send(`The vote mute for ${targetUser.toString()} has expired.`);
+                  const updatedMember = await guild.members.fetch(targetUser.id);
+                  if (updatedMember.voice.channel && updatedMember.voice.channel.id === currentChannel) {
+                    await updatedMember.voice.setMute(false, 'Vote mute expired');
+                    console.log(`User ${targetUser.id} unmuted after vote mute expired`);
                   }
-                } catch (unmute_error) {
-                  console.error('[UNMUTE ERROR]', unmute_error);
+                } catch (error) {
+                  console.error('Error unmuting user after timeout:', error);
+                }
+                
+                // Notify the channel that the mute has expired
+                try {
+                  const channel = guild.channels.cache.get(currentChannel);
+                  if (channel) {
+                    await channel.send(`The vote mute for ${targetUser.toString()} has expired.`);
+                  }
+                } catch (notifyError) {
+                  console.error('Error notifying about expired mute:', notifyError);
                 }
               }
-            } catch (error) {
-              console.error('[UNMUTE TIMER ERROR]', error);
-            }
-          }, 5 * 60 * 1000); // 5 minutes
-        } catch (error) {
-          console.error('[CRITICAL ERROR] Mute execution failed:', error);
-        }
-      }
-      
-      // ===== VOTE FAILURE FUNCTION =====
-      async function failVote() {
-        // Only fail if not already completed
-        if (voteStatus.completed) {
-          console.log('[DUPLICATE] Vote already completed, not showing failure');
-          return;
-        }
-        
-        // Mark as completed
-        voteStatus.completed = true;
-        
-        console.log(`[VOTE FAILED] Not enough votes to mute ${targetUser.tag}`);
-        
-        try {
-          // Update embed to show failure
-          const failEmbed = new EmbedBuilder()
-            .setTitle('Vote Mute')
-            .setDescription(`Vote failed! Not enough votes to mute ${targetUser.toString()}`)
-            .setColor('#888888')
-            .setTimestamp();
-          
-          await interaction.editReply({ embeds: [failEmbed] });
-          
-          // Clean up
-          activeVoteMutes.delete(voteKey);
-        } catch (error) {
-          console.error('[FAIL VOTE ERROR]', error);
-        }
-      }
-      
-      // ===== VOTE CHECKER FUNCTION =====
-      // This is the core function that checks if we have enough votes
-      async function checkVotes() {
-        // Skip if already completed
-        if (voteStatus.completed) return false;
-        
-        try {
-          // Get fresh message data
-          const message = await interaction.fetchReply();
-          const thumbsUp = message.reactions.cache.get('👍');
-          
-          if (!thumbsUp) {
-            console.log('[CHECK VOTES] No reactions found');
-            return false;
+            }, 5 * 60 * 1000); // 5 minutes
+          } catch (muteError) {
+            console.error('Error applying vote mute:', muteError);
+            voteEmbed.setDescription(`Error applying vote mute: ${muteError.message}`);
+            voteEmbed.setColor('#FF0000');
+            await fetchedMessage.edit({ embeds: [voteEmbed] });
           }
-          
-          // Get users who reacted
-          const users = await thumbsUp.users.fetch();
-          
-          // Get current channel members
-          const currentVoiceChannel = guild.channels.cache.get(currentChannel);
-          if (!currentVoiceChannel) {
-            console.log('[CHECK VOTES] Channel no longer exists');
-            return false;
-          }
-          
-          // Filter valid votes - IMPORTANT: Only count votes from users who were
-          // eligible to vote at the start of the vote, even if they've since left
-          const validVoters = users.filter(u => 
-            u.id !== interaction.client.user.id && // Not the bot
-            u.id !== targetUser.id && // Not the target
-            voteStatus.initialEligibleVoterIds.has(u.id) // Was an eligible voter at start
-          );
-          
-          // Log vote status
-          const voterNames = validVoters.map(u => u.username).join(', ');
-          console.log(`[VOTE STATUS] ${validVoters.size}/${voteStatus.initialRequiredVotes} votes`);
-          console.log(`[VOTERS] ${voterNames || 'None'}`);
-          
-          // IMPORTANT: Compare against the INITIAL required votes
-          // This ensures that people leaving doesn't change the vote requirement
-          return validVoters.size >= voteStatus.initialRequiredVotes;
-        } catch (error) {
-          console.error('[CHECK VOTES ERROR]', error);
-          return false;
+        } else {
+          // Vote failed due to timeout or not enough votes
+          voteEmbed.setDescription(`Vote failed! Not enough votes to mute ${targetUser.toString()}`);
+          voteEmbed.setColor('#888888');
+          await fetchedMessage.edit({ embeds: [voteEmbed] });
         }
-      }
-      
-      // ===== COUNTDOWN TIMER SETUP =====
-      // Update the embed at specific intervals
-      const countdownTimes = [15, 10, 5, 4, 3, 2, 1];
-      
-      // Schedule the countdown updates
-      for (const seconds of countdownTimes) {
-        setTimeout(async () => {
-          // Skip if vote already done
-          if (voteStatus.completed) return;
-          
-          try {
-            const updatedEmbed = new EmbedBuilder()
-              .setTitle('Vote Mute')
-              .setDescription(`${displayRequiredVotes} votes required to mute ${targetUser.toString()}\nVote ends in ${seconds} seconds`)
-              .setColor('#FF0000')
-              .setFooter({ text: 'React with 👍 to vote' })
-              .setTimestamp();
-            
-            await interaction.editReply({ embeds: [updatedEmbed] });
-          } catch (error) {
-            console.error(`[COUNTDOWN ERROR] at ${seconds}s:`, error);
-          }
-        }, (20 - seconds) * 1000);
-      }
-      
-      // ===== VOTE CHECK LOOP =====
-      // Check for votes every 250ms
-      const voteCheckInterval = setInterval(async () => {
-        // Stop checking if vote completed
-        if (voteStatus.completed) {
-          clearInterval(voteCheckInterval);
-          return;
-        }
-        
-        // Check if we have enough votes
-        const shouldMute = await checkVotes();
-        
-        // If we should mute, do it immediately
-        if (shouldMute) {
-          console.log('[VOTES RECEIVED] Vote threshold met! Executing mute immediately');
-          
-          // Stop checking
-          clearInterval(voteCheckInterval);
-          
-          // Execute the mute right away
-          await muteTarget();
-        }
-      }, 250);
-      
-      // ===== MAIN VOTE TIMER =====
-      // This ensures the vote always ends after 20 seconds
-      setTimeout(async () => {
-        // Stop checking for votes
-        clearInterval(voteCheckInterval);
-        
-        // Only proceed if not already completed
-        if (!voteStatus.completed) {
-          console.log('[TIMER EXPIRED] 20 seconds elapsed, finalizing vote');
-          
-          // Check one last time
-          const finalCheck = await checkVotes();
-          
-          // Decision time
-          if (finalCheck) {
-            console.log('[FINAL CHECK] Vote passed on final check');
-            await muteTarget();
-          } else {
-            console.log('[FINAL CHECK] Vote failed on final check');
-            await failVote();
-          }
-        }
-      }, 20000);
-      
-      // ===== FAILSAFE =====
-      // Ultimate backup in case something goes wrong
-      setTimeout(() => {
-        if (!voteStatus.completed) {
-          console.log('[FAILSAFE TRIGGERED] Force ending vote after 21 seconds');
-          failVote().catch(e => console.error('[FAILSAFE ERROR]', e));
-        }
-      }, 21000);
+      });
       
     } catch (error) {
-      console.error('[COMMAND ERROR] Vote mute execution failed:', error);
+      console.error('Error in vote mute command:', error);
       
       if (interaction.deferred) {
         await interaction.editReply({ content: 'There was an error while processing the vote mute command.' }).catch(console.error);
