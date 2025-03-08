@@ -18,6 +18,8 @@ try {
 
 module.exports = {
   category: 'channelcommands',
+  // Make sure the command is globally available
+  notglobal: false,
   data: new SlashCommandBuilder()
     .setName('rename')
     .setDescription('Rename your temporary voice channel')
