@@ -106,14 +106,7 @@ module.exports = {
         dispose: true // Make sure we handle reaction removals
       });
       
-      // Track this vote in the active votes map
-      activeVoteMutes.set(voteKey, { 
-        initiator: member.id, 
-        target: targetUser.id,
-        message: fetchedMessage,
-        collector: collector
-      });
-      
+
       // Function to count valid votes
       async function countValidVotes(reaction) {
         // Get fresh data about who's in the voice channel
@@ -134,11 +127,19 @@ module.exports = {
         console.log(`Valid votes: ${validVotes.size}, Required: ${requiredVotes}`);
         
         if(validVotes.size >= requiredVotes){
-            collector.stop("Required Votes Surpassed");
+            collector.stop('Required Votes Surpassed');
         }
 
         return validVotes.size;
       }
+
+      // Track this vote in the active votes map
+      activeVoteMutes.set(voteKey, { 
+        initiator: member.id, 
+        target: targetUser.id,
+        message: fetchedMessage,
+        collector: collector
+      });
       
       // Function to update the embed with current vote count
       async function updateEmbed(validVotes, reaction) {
