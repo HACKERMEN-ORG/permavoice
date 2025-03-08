@@ -1,6 +1,6 @@
 // Invoke necessary modules for the bot to run
 
-const { Client, Collection, Events, ActivityType, GatewayIntentBits, GuildPresences, ChannelType, EmbedBuilder, PermissionFlagsBits, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle,  } = require('discord.js');
+const { Client, Collection, Events, ActivityType, GatewayIntentBits, GuildPresences, ChannelType, EmbedBuilder, PermissionFlagsBits, PermissionsBitField, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 require('dotenv').config();
 const fs = require('node:fs');
 const path = require('node:path');
@@ -13,19 +13,23 @@ const Settings  = require('./Settings');
 const channelState = require('./methods/channelState');
 const { isUserMuted, clearChannelMutes, hasExplicitAction, getExplicitAction } = require('./methods/channelMutes');
 
-// Load the submods module
-let channelSubmods, isSubmod, clearChannelSubmods;
+// Import the submod manager
+let submodManager;
 try {
-  const submodModule = require('./commands/channelcommands/submod');
-  channelSubmods = submodModule.channelSubmods;
-  isSubmod = submodModule.isSubmod;
-  clearChannelSubmods = submodModule.clearChannelSubmods;
+  submodManager = require('./methods/submodmanager');
 } catch (error) {
-  // Create a placeholder if module doesn't exist yet
-  channelSubmods = new Map();
-  isSubmod = () => false;
-  clearChannelSubmods = () => {};
-  console.log('Submods module not found. Creating placeholder.');
+  console.error('Error loading submod manager, creating placeholder:', error);
+  // Create a placeholder if the module doesn't exist yet
+  submodManager = {
+    channelSubmods: new Map(),
+    isSubmod: () => false,
+    addSubmod: () => true,
+    removeSubmod: () => true,
+    getSubmods: () => new Set(),
+    clearChannelSubmods: () => {},
+    saveSubmodsData: () => {},
+    loadSubmodsData: () => {}
+  };
 }
 
 const token = process.env.DISCORD_TOKEN;
@@ -157,6 +161,15 @@ for (const folder of commandFolders) {
 client.once(Events.ClientReady, async readyClient => {
   console.log(`Ready! Logged in as ${readyClient.user.tag}`);
 
+  // Try to load submods data if the module exists
+  if (submodManager && typeof submodManager.loadSubmodsData === 'function') {
+    try {
+      submodManager.loadSubmodsData();
+    } catch (error) {
+      console.error('Error loading submods data:', error);
+    }
+  }
+
   // Load and validate channel data
   channelState.loadChannelData();
   await channelState.validateChannels(readyClient);
@@ -192,7 +205,7 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 
         // Skip all mute processing for channel owners and submods
         if ((channelOwners.has(channelId) && channelOwners.get(channelId) === userId) || 
-            isSubmod(channelId, userId)) {
+            submodManager.isSubmod(channelId, userId)) {
             // This is the channel owner or a submod - ensure they're always unmuted in their channel
             if (newState.member.voice.serverMute) {
                 console.log(`Channel owner/submod ${userId} is muted in their channel ${channelId}, unmuting`);
@@ -407,8 +420,8 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
                     clearChannelMutes(oldChannel.id);
                     
                     // Clear submods data
-                    if (clearChannelSubmods) {
-                        clearChannelSubmods(oldChannel.id);
+                    if (submodManager && typeof submodManager.clearChannelSubmods === 'function') {
+                        submodManager.clearChannelSubmods(oldChannel.id);
                     }
 
                     // Delete the channel
@@ -433,8 +446,8 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
                 clearChannelMutes(oldChannel.id);
                 
                 // Clear submods data
-                if (clearChannelSubmods) {
-                    clearChannelSubmods(oldChannel.id);
+                if (submodManager && typeof submodManager.clearChannelSubmods === 'function') {
+                    submodManager.clearChannelSubmods(oldChannel.id);
                 }
 
                 // Delete the channel

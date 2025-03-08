@@ -1,7 +1,19 @@
 const { SlashCommandBuilder } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
-const { removeSubmod, isSubmod } = require('./submod');
+
+// Import the submod manager
+let submodManager;
+try {
+  submodManager = require('../../methods/submodmanager');
+} catch (error) {
+  console.error('Error importing submodmanager:', error);
+  // Create a placeholder if module doesn't exist yet
+  submodManager = {
+    removeSubmod: () => true,
+    isSubmod: () => false
+  };
+}
 
 module.exports = {
   category: 'channelcommands',
@@ -38,17 +50,18 @@ module.exports = {
       }
 
       // Check if the user is actually a submod
-      if (!isSubmod(currentChannel, targetUser.id)) {
+      if (!submodManager.isSubmod(currentChannel, targetUser.id)) {
         return await interaction.editReply({ content: `${targetUser.username} is not a submoderator in this channel.` });
       }
       
       // Remove the user as a submod
-      removeSubmod(currentChannel, targetUser.id);
+      submodManager.removeSubmod(currentChannel, targetUser.id);
       
       // Reset permissions for the user (remove elevated permissions)
       const targetChannel = guild.channels.cache.get(currentChannel);
-      targetChannel.permissionOverwrites.delete(targetUser.id);
+      await targetChannel.permissionOverwrites.delete(targetUser.id);
       
+      console.log(`Removed ${targetUser.id} as submod from channel ${currentChannel}`);
       return await interaction.editReply({ content: `${targetUser.username} has been removed as a submoderator from this channel.` });
     } catch (error) {
       console.error('Error in unsubmod command:', error);

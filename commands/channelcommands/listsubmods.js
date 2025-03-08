@@ -1,7 +1,19 @@
 const { SlashCommandBuilder, EmbedBuilder } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
-const { getSubmods } = require('./submod');
+
+// Import the submod manager
+let submodManager;
+try {
+  submodManager = require('../../methods/submodmanager');
+} catch (error) {
+  console.error('Error importing submodmanager:', error);
+  // Create a placeholder if module doesn't exist yet
+  submodManager = {
+    getSubmods: () => new Set(),
+    isSubmod: () => false
+  };
+}
 
 module.exports = {
   category: 'channelcommands',
@@ -23,14 +35,14 @@ module.exports = {
       return interaction.reply({ content: 'You must be in a temporary channel.', ephemeral: true });
     }
 
-    // Check if the user is the owner of the channel
-    if (channelOwners.get(currentChannel) !== member.id) {
+    // Check if the user is the owner of the channel or a submoderator
+    if (channelOwners.get(currentChannel) !== member.id && !submodManager.isSubmod(currentChannel, member.id)) {
       return interaction.reply({ content: 'You do not have permission to use this command.', ephemeral: true });
     }
 
     try {
       // Get all submods for this channel
-      const submods = getSubmods(currentChannel);
+      const submods = submodManager.getSubmods(currentChannel);
       
       if (submods.size === 0) {
         return interaction.reply({ content: 'No submoderators have been added to this channel.', ephemeral: true });
