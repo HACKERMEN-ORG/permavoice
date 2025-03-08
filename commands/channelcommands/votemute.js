@@ -83,14 +83,15 @@ module.exports = {
       // Calculate required votes - MAJORITY of eligible voters
       const actualRequiredVotes = Math.ceil(totalEligibleVoters / 2);
       
-      // For display purposes, we add 1 to account for the bot's reaction that users see but doesn't count
-      const displayRequiredVotes = actualRequiredVotes + 1;
+      // For display purposes, if there are only 2 eligible voters (3 people total including target),
+      // we want the embed to say 3 votes are required (as requested by user)
+      const displayRequiredVotes = totalEligibleVoters === 2 ? 3 : actualRequiredVotes + 1;
       
       console.log(`Starting vote mute against ${targetUser.tag} in channel ${currentChannel}`);
       console.log(`Actual required votes: ${actualRequiredVotes} out of ${totalEligibleVoters} eligible voters`);
-      console.log(`Display required votes: ${displayRequiredVotes} (including bot's reaction)`);
+      console.log(`Display required votes: ${displayRequiredVotes}`);
       
-      // Create vote embed with the display vote count (actual + 1)
+      // Create vote embed with the display vote count
       const voteEmbed = new EmbedBuilder()
         .setTitle('Vote Mute')
         .setDescription(`${displayRequiredVotes} votes required to mute ${targetUser.toString()}\nVote ends in 20 seconds`)
@@ -104,9 +105,14 @@ module.exports = {
       // Add the initial thumbs up reaction
       await voteMessage.react('👍');
       
+      // Get the start time for countdown timer
+      const startTime = Date.now();
+      
       // Mark this as an active vote
       activeVoteMutes.set(voteKey, {
-        inProgress: true
+        inProgress: true,
+        startTime: startTime,
+        targetId: targetUser.id
       });
       
       // Set up a variable to track if mute has been executed
@@ -207,11 +213,40 @@ module.exports = {
         }
       }
       
+      // Function to update remaining time
+      async function updateRemainingTime() {
+        if (muteExecuted) return;
+        
+        const now = Date.now();
+        const elapsed = now - startTime;
+        const remaining = Math.max(0, 20000 - elapsed); // 20 seconds in ms
+        const secondsLeft = Math.ceil(remaining / 1000);
+        
+        if (secondsLeft <= 0) return; // Time's up, don't update
+        
+        try {
+          // Update the embed with current time remaining
+          const updatedEmbed = new EmbedBuilder()
+            .setTitle('Vote Mute')
+            .setDescription(`${displayRequiredVotes} votes required to mute ${targetUser.toString()}\nVote ends in ${secondsLeft} seconds`)
+            .setColor('#FF0000')
+            .setFooter({ text: 'React with 👍 to vote' })
+            .setTimestamp();
+          
+          await interaction.editReply({ embeds: [updatedEmbed] });
+        } catch (error) {
+          console.error('Error updating time:', error);
+        }
+      }
+      
       // MANUAL REACTION CHECKING LOOP
       // Poll every 250ms - faster to detect votes quicker
       
       // Store the interval ID so we can clear it
       let checkInterval = null;
+      
+      // Time update interval - update every 3 seconds
+      let timeUpdateInterval = setInterval(updateRemainingTime, 2000);
       
       // Set up a manual check of reactions
       checkInterval = setInterval(async () => {
@@ -219,6 +254,7 @@ module.exports = {
           // Skip if mute already executed
           if (muteExecuted) {
             clearInterval(checkInterval);
+            clearInterval(timeUpdateInterval);
             return;
           }
           
@@ -239,6 +275,7 @@ module.exports = {
           if (!currentVoiceChannel) {
             console.log('Voice channel no longer exists');
             clearInterval(checkInterval);
+            clearInterval(timeUpdateInterval);
             return endWithFailedVote();
           }
           
@@ -255,14 +292,10 @@ module.exports = {
           // Calculate current requirements
           const currentEligibleVoters = currentVoiceChannel.members.filter(m => m.id !== targetUser.id).size;
           const currentRequiredVotes = Math.ceil(currentEligibleVoters / 2);
-          const currentDisplayRequired = currentRequiredVotes + 1; // For display purposes
           
           // Log detailed vote information
           console.log(`Current vote count: ${validVoters.size}/${currentRequiredVotes} [Required: ${currentRequiredVotes}]`);
           console.log(`Voters: ${voterIds.join(', ')}`);
-          
-          // IMPORTANT: We're not updating the embed with vote counts anymore
-          // since we don't want to display "x/y votes" as it's redundant with the reaction count
           
           // CHECK IF THRESHOLD MET - THIS IS THE CRITICAL PART
           if (validVoters.size >= currentRequiredVotes) {
@@ -271,9 +304,10 @@ module.exports = {
             
             // Stop checking
             clearInterval(checkInterval);
+            clearInterval(timeUpdateInterval);
             
             // Execute the mute IMMEDIATELY - this is critical, we do it right away
-            executeMute();
+            await executeMute();
           }
         } catch (error) {
           console.error('Error in reaction check interval:', error);
@@ -282,8 +316,9 @@ module.exports = {
       
       // Set timeout to end the vote after 20 seconds
       setTimeout(() => {
-        // Clear the checking interval
-        if (checkInterval) clearInterval(checkInterval);
+        // Clear the checking interval and time update interval
+        clearInterval(checkInterval);
+        clearInterval(timeUpdateInterval);
         
         // If mute wasn't already executed, do one final check
         if (!muteExecuted) {
