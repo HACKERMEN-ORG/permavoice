@@ -324,7 +324,8 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
                 permissionOverwrites: [
                     {
                         id: newState.member.id,
-                        allow: [PermissionFlagsBits.Connect, PermissionFlagsBits.Speak, PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ManageChannels],
+                        // Removed ManageChannels permission - only basic voice permissions
+                        allow: [PermissionFlagsBits.Connect, PermissionFlagsBits.Speak, PermissionFlagsBits.ViewChannel],
                     },
                 ],
             })

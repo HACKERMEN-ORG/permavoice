@@ -67,15 +67,13 @@ module.exports = {
       // Add the user as a submod
       submodManager.addSubmod(currentChannel, targetUser.id);
       
-      // Set permissions for the submoderator
+      // Set permissions for the submoderator - removing elevated permissions
       const targetChannel = guild.channels.cache.get(currentChannel);
       await targetChannel.permissionOverwrites.edit(targetUser.id, { 
         Connect: true, 
         ViewChannel: true, 
-        Speak: true, 
-        MuteMembers: true, 
-        DeafenMembers: true,
-        MoveMembers: true
+        Speak: true
+        // Removed: MuteMembers, DeafenMembers, MoveMembers permissions
       });
       
       console.log(`Added ${targetUser.id} as submod to channel ${currentChannel}`);
