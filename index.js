@@ -135,6 +135,7 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 
 client.cooldowns = new Collection();
 client.commands = new Collection();
+
 const foldersPath = path.join(__dirname, 'commands');
 const commandFolders = fs.readdirSync(foldersPath);
 
@@ -367,7 +368,6 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
     }
     return;
 }
-
 
     // Handle the channel deletion if the channel is empty
     if (oldState.channelId) {

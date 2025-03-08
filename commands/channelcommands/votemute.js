@@ -86,7 +86,7 @@ module.exports = {
       // Create vote embed
       const voteEmbed = new EmbedBuilder()
         .setTitle('Vote Mute')
-        .setDescription(`${requiredVotes}/${totalEligibleVoters} votes required to mute ${targetUser.toString()}\nVote ends in 15 seconds`)
+        .setDescription(`${requiredVotes + 1} votes required to mute ${targetUser.toString()}\nVote ends in 30 seconds`)
         .setColor('#FF0000')
         .setFooter({ text: 'React with 👍 to vote' })
         .setTimestamp();
@@ -100,9 +100,9 @@ module.exports = {
       // Fetch the message to ensure we have access to the reaction
       const fetchedMessage = await interaction.fetchReply();
       
-      // The vote will last for 15 seconds or until enough votes are collected
-      const collector = fetchedMessage.createReactionCollector({ 
-        time: 15000,
+      // The vote will last for 30 seconds or until enough votes are collected
+      const collector = fetchedMessage.createReactionCollector({
+        time: 30000,
         dispose: true // Make sure we handle reaction removals
       });
       
@@ -133,6 +133,10 @@ module.exports = {
         // Log the votes being counted
         console.log(`Valid votes: ${validVotes.size}, Required: ${requiredVotes}`);
         
+        if(validVotes.size >= requiredVotes){
+            collector.stop("Required Votes Surpassed");
+        }
+
         return validVotes.size;
       }
       
