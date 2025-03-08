@@ -12,6 +12,7 @@ const { waitingRoom } = require('./methods/waitingRoom');
 const Settings  = require('./Settings');
 const channelState = require('./methods/channelState');
 const { isUserMuted, clearChannelMutes, hasExplicitAction, getExplicitAction, addMutedUser, removeMutedUser } = require('./methods/channelMutes');
+const reminderSystem = require('./methods/reminderSystem');
 
 // Import the submod manager
 let submodManager;
@@ -177,6 +178,10 @@ client.once(Events.ClientReady, async readyClient => {
 
   // Setup process exit handlers
   channelState.setupExitHandlers();
+  
+  // Start the reminder system with random intervals between 30-120 minutes
+  reminderSystem.startReminders(readyClient, 30, 120);
+  console.log('Reminder system initialized');
 });
 
 
