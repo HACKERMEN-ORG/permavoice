@@ -412,9 +412,9 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
                 toggleLock.set(channel.id, 0);
 
                 const embed = new EmbedBuilder()
-                    .setTitle("✏️ **Controls**")
-                    .setDescription("**Moderator Commands**\n/mute - Mute a user in your channel\n/unmute - Unmute a user in your channel\n /kick - Kick a user from the channel\n /ban- Ban a user from your channel\n /unban - Unban a user from your channel\n /listmuted - View all muted users\n/listbanned - View all banned users\n/submod - Add a submoderator to the channel\n/unsubmod - Remove a submoderator from the channel\n/listsubmods - View all submoderators\n\n**Community Commands**\n/votemute - Anyone can call a vote to mute a disruptive member")
-                    .setColor("#f5cc00")
+                    .setTitle("🎮 **Voice Channel Controls**")
+                    .setDescription("**🔸 Welcome to your custom voice channel! 🔸**\n\n**Owner Commands:**\n`/mute` - Mute a user in your channel\n`/unmute` - Unmute a user in your channel\n`/kick` - Kick a user from the channel\n`/ban` - Ban a user from your channel\n`/unban` - Unban a user from your channel\n`/listmuted` - View all muted users\n`/listbanned` - View all banned users\n`/submod` - Add a submoderator to the channel\n`/unsubmod` - Remove a submoderator\n`/listsubmods` - View all submoderators\n\n**⚠️ For Everyone: Dealing with Disruptive Users ⚠️**\n`/votemute` - Anyone can start a vote to mute a disruptive member for 5 minutes\n\n**⭐ Remember: Anyone can create their own voice room by joining the '+ CREATE' channel! ⭐**")
+                    .setColor("#FF5500")
                     .setTimestamp();
 
                 const actionRow = new ActionRowBuilder()

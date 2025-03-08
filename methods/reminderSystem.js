@@ -9,13 +9,13 @@ const Settings = require('../Settings');
 class ReminderSystem {
   constructor() {
     this.reminderMessages = [
-      "Remember: If someone is being disruptive, you can use the `/votemute` command to start a vote to mute them for 5 minutes!",
-      "Tip: You can create your own voice channel at any time by joining the 'Temporary Voice Create' channel.",
-      "Server Tip: Channel owners can use `/ban`, `/kick`, and `/mute` commands to manage their voice channels.",
-      "Did you know? You can add trusted friends as submoderators with the `/submod` command to help manage your voice channel.",
-      "Reminder: The `/votemute` command is available to everyone to help maintain a positive voice environment.",
-      "Voice Channel Tip: Use `/help` to see all available commands for channel management.",
-      "Need your own space? Create a custom voice channel by joining the 'Temporary Voice Create' channel."
+      "🔊 REMINDER: If someone is being disruptive in voice chat, use the `/votemute` command to start a vote to mute them for 5 minutes!",
+      "🔊 TIP: Create your own custom voice room anytime by joining the '+ CREATE' channel!",
+      "🔊 VOICE TIP: Dealing with a disruptive member? The `/votemute` command lets everyone vote to temporarily mute them.",
+      "🔊 SERVER TIP: Need your own voice space? Join the '+ CREATE' channel to instantly get your own customizable room!",
+      "🔊 REMINDER: Create your own voice channel with your own rules by joining the '+ CREATE' channel at any time!",
+      "🔊 MODERATION TIP: The `/votemute` command is available to EVERYONE - use it when someone is being disruptive in voice chat.",
+      "🔊 DID YOU KNOW? You can make your own voice room by joining the '+ CREATE' channel, and manage it with commands like `/ban`, `/kick`, and `/mute`!"
     ];
     
     // Timer reference for cleanup
@@ -124,10 +124,10 @@ class ReminderSystem {
     
     // Create the embed
     const reminderEmbed = new EmbedBuilder()
-      .setTitle('🔔 Brainiac Bot Reminder')
+      .setTitle('🎙️ Voice Chat Tips')
       .setDescription(message)
-      .setColor('#3498db')
-      .setFooter({ text: 'TempVoice Bot' })
+      .setColor('#FF5500')
+      .setFooter({ text: 'TempVoice Bot | Type /help for commands' })
       .setTimestamp();
     
     // Send the message to each active channel
