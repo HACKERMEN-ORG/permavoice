@@ -117,16 +117,18 @@ module.exports = {
       
       // Set up a variable to track if mute has been executed
       let muteExecuted = false;
+      let voteCompleted = false;
       
       // Function to execute the mute
       async function executeMute() {
         // Prevent double execution
-        if (muteExecuted) {
-          console.log('Mute already executed, skipping...');
+        if (muteExecuted || voteCompleted) {
+          console.log('Mute already executed or vote completed, skipping...');
           return;
         }
         
         muteExecuted = true;
+        voteCompleted = true;
         console.log(`EXECUTING MUTE NOW for ${targetUser.tag}`);
         
         try {
@@ -191,9 +193,13 @@ module.exports = {
       
       // Function to end with failed vote
       async function endWithFailedVote() {
-        // Only run if mute wasn't already executed
-        if (muteExecuted) return;
+        // Only run if mute wasn't already executed and vote isn't completed
+        if (muteExecuted || voteCompleted) {
+          console.log('Vote already completed, skipping failed vote handler');
+          return;
+        }
         
+        voteCompleted = true;
         console.log(`Vote failed for ${targetUser.tag}`);
         
         try {
@@ -215,14 +221,21 @@ module.exports = {
       
       // Function to update remaining time
       async function updateRemainingTime() {
-        if (muteExecuted) return;
+        // Don't update if vote is already completed
+        if (muteExecuted || voteCompleted) return;
         
         const now = Date.now();
         const elapsed = now - startTime;
         const remaining = Math.max(0, 20000 - elapsed); // 20 seconds in ms
         const secondsLeft = Math.ceil(remaining / 1000);
         
-        if (secondsLeft <= 0) return; // Time's up, don't update
+        // If time's up, end the vote
+        if (secondsLeft <= 0) {
+          clearInterval(timeUpdateInterval);
+          clearInterval(checkInterval);
+          await checkFinalVotes(); // Do one final check
+          return;
+        }
         
         try {
           // Update the embed with current time remaining
@@ -239,32 +252,19 @@ module.exports = {
         }
       }
       
-      // MANUAL REACTION CHECKING LOOP
-      // Poll every 250ms - faster to detect votes quicker
-      
-      // Store the interval ID so we can clear it
-      let checkInterval = null;
-      
-      // Time update interval - update every 3 seconds
-      let timeUpdateInterval = setInterval(updateRemainingTime, 2000);
-      
-      // Set up a manual check of reactions
-      checkInterval = setInterval(async () => {
+      // Function to check votes and decide if mute should be executed
+      async function checkVotes() {
+        // Skip if vote already completed
+        if (muteExecuted || voteCompleted) return false;
+        
         try {
-          // Skip if mute already executed
-          if (muteExecuted) {
-            clearInterval(checkInterval);
-            clearInterval(timeUpdateInterval);
-            return;
-          }
-          
           // Get the latest message with reactions
           const latestMessage = await interaction.fetchReply();
           const thumbsUpReaction = latestMessage.reactions.cache.get('👍');
           
           if (!thumbsUpReaction) {
             console.log('No thumbs up reaction found');
-            return;
+            return false;
           }
           
           // Get all users who reacted
@@ -274,9 +274,7 @@ module.exports = {
           const currentVoiceChannel = guild.channels.cache.get(currentChannel);
           if (!currentVoiceChannel) {
             console.log('Voice channel no longer exists');
-            clearInterval(checkInterval);
-            clearInterval(timeUpdateInterval);
-            return endWithFailedVote();
+            return false;
           }
           
           // Filter to valid voters - excluding the bot and target
@@ -297,78 +295,82 @@ module.exports = {
           console.log(`Current vote count: ${validVoters.size}/${currentRequiredVotes} [Required: ${currentRequiredVotes}]`);
           console.log(`Voters: ${voterIds.join(', ')}`);
           
-          // CHECK IF THRESHOLD MET - THIS IS THE CRITICAL PART
+          // CHECK IF THRESHOLD MET
           if (validVoters.size >= currentRequiredVotes) {
             console.log(`VOTE THRESHOLD MET! ${validVoters.size}/${currentRequiredVotes} - Executing mute IMMEDIATELY`);
             console.log(`Voters who triggered the mute: ${voterIds.join(', ')}`);
-            
-            // Stop checking
-            clearInterval(checkInterval);
-            clearInterval(timeUpdateInterval);
-            
-            // Execute the mute IMMEDIATELY - this is critical, we do it right away
-            await executeMute();
+            return true;
           }
+          
+          return false;
         } catch (error) {
-          console.error('Error in reaction check interval:', error);
+          console.error('Error checking votes:', error);
+          return false;
         }
-      }, 250); // Check every 250ms - faster checks for better responsiveness
+      }
       
-      // Set timeout to end the vote after 20 seconds
-      setTimeout(() => {
-        // Clear the checking interval and time update interval
+      // Function to do final vote check
+      async function checkFinalVotes() {
+        console.log('Performing FINAL vote check...');
+        
+        const shouldMute = await checkVotes();
+        
+        if (shouldMute) {
+          await executeMute();
+        } else {
+          await endWithFailedVote();
+        }
+      }
+      
+      // MANUAL REACTION CHECKING LOOP
+      // Poll every 250ms - faster to detect votes quicker
+      
+      // Store the interval IDs so we can clear them
+      let checkInterval = null;
+      let timeUpdateInterval = null;
+      
+      // IMPORTANT: 20 second timeout - guaranteed to end the vote
+      const voteEndTimeout = setTimeout(async () => {
+        console.log('20 SECOND TIMEOUT TRIGGERED - Ending vote');
+        
+        // Clear intervals
         clearInterval(checkInterval);
         clearInterval(timeUpdateInterval);
         
-        // If mute wasn't already executed, do one final check
-        if (!muteExecuted) {
-          (async () => {
-            try {
-              // Get the latest message with reactions
-              const finalMessage = await interaction.fetchReply();
-              const finalReaction = finalMessage.reactions.cache.get('👍');
-              
-              if (!finalReaction) {
-                return endWithFailedVote();
-              }
-              
-              // Get all users who reacted
-              const finalUsers = await finalReaction.users.fetch();
-              
-              // Get the current voice channel members
-              const finalVoiceChannel = guild.channels.cache.get(currentChannel);
-              if (!finalVoiceChannel) {
-                return endWithFailedVote();
-              }
-              
-              // Filter to valid voters
-              const finalValidVoters = finalUsers.filter(u => 
-                u.id !== interaction.client.user.id && // Not the bot
-                u.id !== targetUser.id && // Not the target
-                finalVoiceChannel.members.has(u.id) // In the voice channel
-              );
-              
-              // Calculate final requirements
-              const finalEligibleVoters = finalVoiceChannel.members.filter(m => m.id !== targetUser.id).size;
-              const finalRequiredVotes = Math.ceil(finalEligibleVoters / 2);
-              
-              console.log(`FINAL vote count: ${finalValidVoters.size}/${finalRequiredVotes}`);
-              
-              // Final threshold check
-              if (finalValidVoters.size >= finalRequiredVotes) {
-                console.log('Threshold met in final check!');
-                await executeMute();
-              } else {
-                console.log('Vote failed in final check');
-                await endWithFailedVote();
-              }
-            } catch (error) {
-              console.error('Error in final vote check:', error);
-              await endWithFailedVote();
-            }
-          })();
+        // Do one final check if vote hasn't completed yet
+        if (!voteCompleted) {
+          await checkFinalVotes();
         }
-      }, 20000); // 20 seconds
+      }, 20000);
+      
+      // Set up a manual check of reactions
+      checkInterval = setInterval(async () => {
+        try {
+          // Skip if vote already completed
+          if (muteExecuted || voteCompleted) {
+            clearInterval(checkInterval);
+            return;
+          }
+          
+          // Check if threshold is met
+          const shouldMute = await checkVotes();
+          
+          if (shouldMute) {
+            // Clear all timers immediately
+            clearInterval(checkInterval);
+            clearInterval(timeUpdateInterval);
+            clearTimeout(voteEndTimeout);
+            
+            // Execute the mute IMMEDIATELY
+            await executeMute();
+          }
+        } catch (error) {
+          console.error('Error in vote check interval:', error);
+        }
+      }, 250); // Check every 250ms
+      
+      // Set up timer update interval
+      timeUpdateInterval = setInterval(updateRemainingTime, 2000); // Update every 2 seconds
       
     } catch (error) {
       console.error('Error in vote mute command:', error);
