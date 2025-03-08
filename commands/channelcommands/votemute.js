@@ -80,19 +80,20 @@ module.exports = {
       const eligibleVoters = voiceChannel.members.filter(m => m.id !== targetUser.id);
       const totalEligibleVoters = eligibleVoters.size;
       
-      // Calculate required votes - MAJORITY + 1 (to include bot's fake vote)
-      // For UI/UX purposes, we're showing one more vote because the bot's reaction shows up but doesn't count
-      const requiredVotes = Math.ceil(totalEligibleVoters / 2);
-      const displayRequiredVotes = requiredVotes + 1; // Add 1 for the bot's vote that users see but doesn't count
+      // Calculate required votes - MAJORITY of eligible voters
+      const actualRequiredVotes = Math.ceil(totalEligibleVoters / 2);
+      
+      // For display purposes, we add 1 to account for the bot's reaction that users see but doesn't count
+      const displayRequiredVotes = actualRequiredVotes + 1;
       
       console.log(`Starting vote mute against ${targetUser.tag} in channel ${currentChannel}`);
-      console.log(`Real required votes: ${requiredVotes} out of ${totalEligibleVoters} eligible voters`);
-      console.log(`Display required votes: ${displayRequiredVotes} (including bot's vote for UI purposes)`);
+      console.log(`Actual required votes: ${actualRequiredVotes} out of ${totalEligibleVoters} eligible voters`);
+      console.log(`Display required votes: ${displayRequiredVotes} (including bot's reaction)`);
       
-      // Create vote embed
+      // Create vote embed with the display vote count (actual + 1)
       const voteEmbed = new EmbedBuilder()
         .setTitle('Vote Mute')
-        .setDescription(`${requiredVotes} votes required to mute ${targetUser.toString()}\nVote ends in 20 seconds`)
+        .setDescription(`${displayRequiredVotes} votes required to mute ${targetUser.toString()}\nVote ends in 20 seconds`)
         .setColor('#FF0000')
         .setFooter({ text: 'React with 👍 to vote' })
         .setTimestamp();
@@ -254,23 +255,14 @@ module.exports = {
           // Calculate current requirements
           const currentEligibleVoters = currentVoiceChannel.members.filter(m => m.id !== targetUser.id).size;
           const currentRequiredVotes = Math.ceil(currentEligibleVoters / 2);
-          const displayRequired = currentRequiredVotes + 1; // For display purposes
+          const currentDisplayRequired = currentRequiredVotes + 1; // For display purposes
           
           // Log detailed vote information
           console.log(`Current vote count: ${validVoters.size}/${currentRequiredVotes} [Required: ${currentRequiredVotes}]`);
           console.log(`Voters: ${voterIds.join(', ')}`);
           
-          // Update the embed with current vote count
-          if (!muteExecuted) {
-            const updatedEmbed = new EmbedBuilder()
-              .setTitle('Vote Mute')
-              .setDescription(`${validVoters.size}/${currentEligibleVoters} votes to mute ${targetUser.toString()} (need ${currentRequiredVotes})`)
-              .setColor('#FF0000')
-              .setFooter({ text: 'React with 👍 to vote' })
-              .setTimestamp();
-            
-            await interaction.editReply({ embeds: [updatedEmbed] });
-          }
+          // IMPORTANT: We're not updating the embed with vote counts anymore
+          // since we don't want to display "x/y votes" as it's redundant with the reaction count
           
           // CHECK IF THRESHOLD MET - THIS IS THE CRITICAL PART
           if (validVoters.size >= currentRequiredVotes) {
