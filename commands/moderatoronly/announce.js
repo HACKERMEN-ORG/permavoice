@@ -51,7 +51,7 @@ module.exports = {
             // Get announcement details
             const title = interaction.options.getString('title');
             const description = interaction.options.getString('description');
-            const color = interaction.options.getString('color') || '#FF5500'; // Default color
+            const color = interaction.options.getString('color') || '#f47fff'; // Default color
             const imageUrl = interaction.options.getString('image');
             const footer = interaction.options.getString('footer');
             const anonymous = interaction.options.getBoolean('anonymous') || false;
