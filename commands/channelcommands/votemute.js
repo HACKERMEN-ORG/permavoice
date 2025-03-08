@@ -83,8 +83,8 @@ module.exports = {
       // Calculate required votes - 50% of eligible voters required (rounded up)
       const requiredVotes = Math.ceil(totalEligibleVoters / 2);
       
-      console.log(`Starting vote mute in channel ${currentChannel}`);
-      console.log(`Total eligible voters: ${totalEligibleVoters}, Required votes: ${requiredVotes}`);
+      console.log(`Starting vote mute against ${targetUser.tag} in channel ${currentChannel}`);
+      console.log(`Required votes: ${requiredVotes} out of ${totalEligibleVoters} eligible voters`);
       
       // Create vote embed
       const voteEmbed = new EmbedBuilder()
@@ -97,228 +97,246 @@ module.exports = {
       // Send the vote message
       const voteMessage = await interaction.editReply({ embeds: [voteEmbed] });
       
-      // Add reaction for voting
+      // Add the initial thumbs up reaction
       await voteMessage.react('👍');
       
-      // Set up flags and timeouts
-      let voteComplete = false;
-      let collectTimeout = null;
-      activeVoteMutes.set(voteKey, true);
+      // Mark this as an active vote
+      activeVoteMutes.set(voteKey, {
+        inProgress: true
+      });
+      
+      // ----------------------
+      // MANUAL REACTION CHECK
+      // ----------------------
+      
+      // This is the key to fixing the issue - we'll manually poll for reactions
+      // instead of relying on the collector events
 
-      // Function to execute mute
-      async function executeVoteMute() {
-        if (voteComplete) return; // Prevent double execution
-        voteComplete = true;
+      // Set up a variable to track if mute has been executed
+      let muteExecuted = false;
+      
+      // Function to execute the mute
+      async function executeMute() {
+        // Prevent double execution
+        if (muteExecuted) return;
+        muteExecuted = true;
         
-        console.log(`EXECUTING VOTE MUTE for ${targetUser.tag}`);
-        
-        // Clear any pending timeouts
-        if (collectTimeout) clearTimeout(collectTimeout);
+        console.log(`EXECUTING MUTE for ${targetUser.tag}`);
         
         try {
-          // Update embed to show success
-          voteEmbed.setDescription(`Vote passed! ${targetUser.toString()} has been muted for 5 minutes`);
-          voteEmbed.setColor('#00FF00');
-          await interaction.editReply({ embeds: [voteEmbed] });
+          // Update the embed to show vote passed
+          const successEmbed = new EmbedBuilder()
+            .setTitle('Vote Mute')
+            .setDescription(`Vote passed! ${targetUser.toString()} has been muted for 5 minutes`)
+            .setColor('#00FF00')
+            .setTimestamp();
           
-          // Register the mute in our tracking system
+          await interaction.editReply({ embeds: [successEmbed] });
+          
+          // Remove from active votes
+          activeVoteMutes.delete(voteKey);
+          
+          // Add to muted users
           addMutedUser(currentChannel, targetUser.id);
           
-          // Get fresh user data
-          const freshTargetMember = await guild.members.fetch(targetUser.id);
+          // Get fresh target user data
+          const freshTarget = await guild.members.fetch(targetUser.id);
           
-          // Apply the mute if they're still in the channel
-          if (freshTargetMember.voice.channel && freshTargetMember.voice.channel.id === currentChannel) {
-            await freshTargetMember.voice.setMute(true, 'Vote mute');
-            console.log(`Successfully applied server mute to ${targetUser.tag}`);
+          // Apply the server mute if they're still in the channel
+          if (freshTarget.voice.channel && freshTarget.voice.channel.id === currentChannel) {
+            await freshTarget.voice.setMute(true, 'Vote mute');
+            console.log(`Successfully muted ${targetUser.tag}`);
             
-            // Send confirmation to the channel
+            // Announce in the channel
             await voiceChannel.send(`${targetUser.toString()} has been muted for 5 minutes by vote.`);
           }
           
-          // Set timeout to automatically unmute after 5 minutes
+          // Set timeout to unmute after 5 minutes
           setTimeout(async () => {
             try {
-              // Only proceed if the user is still marked as muted
+              // Check if the user is still marked as muted
               if (isUserMuted(currentChannel, targetUser.id)) {
-                console.log(`Unmuting ${targetUser.tag} after timeout`);
-                
-                // Remove from mute tracking
+                // Remove mute tracking
                 removeMutedUser(currentChannel, targetUser.id);
                 
                 // Get fresh user data
-                const userToUnmute = await guild.members.fetch(targetUser.id);
-                
-                // Unmute if still in the channel
-                if (userToUnmute.voice.channel && userToUnmute.voice.channel.id === currentChannel) {
-                  await userToUnmute.voice.setMute(false, 'Vote mute expired');
+                try {
+                  const unmuteTarget = await guild.members.fetch(targetUser.id);
                   
-                  // Notify the channel
-                  await voiceChannel.send(`The vote mute for ${targetUser.toString()} has expired.`);
+                  // If they're still in the channel, unmute them
+                  if (unmuteTarget.voice.channel && unmuteTarget.voice.channel.id === currentChannel) {
+                    await unmuteTarget.voice.setMute(false, 'Vote mute expired');
+                    
+                    // Notify channel
+                    await voiceChannel.send(`The vote mute for ${targetUser.toString()} has expired.`);
+                  }
+                } catch (error) {
+                  console.error('Error unmuting user:', error);
                 }
               }
             } catch (error) {
-              console.error('Error unmuting user after timeout:', error);
+              console.error('Error in unmute timeout:', error);
             }
           }, 5 * 60 * 1000); // 5 minutes
         } catch (error) {
-          console.error('Error executing vote mute:', error);
+          console.error('Error executing mute:', error);
         }
-        
-        // Clean up
-        activeVoteMutes.delete(voteKey);
       }
       
       // Function to end with failed vote
       async function endWithFailedVote() {
-        if (voteComplete) return; // Don't do anything if vote already completed
-        voteComplete = true;
+        // Only run if mute wasn't already executed
+        if (muteExecuted) return;
         
         console.log(`Vote failed for ${targetUser.tag}`);
         
         try {
           // Update embed to show failure
-          voteEmbed.setDescription(`Vote failed! Not enough votes to mute ${targetUser.toString()}`);
-          voteEmbed.setColor('#888888');
-          await interaction.editReply({ embeds: [voteEmbed] });
+          const failEmbed = new EmbedBuilder()
+            .setTitle('Vote Mute')
+            .setDescription(`Vote failed! Not enough votes to mute ${targetUser.toString()}`)
+            .setColor('#888888')
+            .setTimestamp();
+          
+          await interaction.editReply({ embeds: [failEmbed] });
+          
+          // Remove from active votes
+          activeVoteMutes.delete(voteKey);
         } catch (error) {
-          console.error('Error updating failed vote embed:', error);
+          console.error('Error ending with failed vote:', error);
         }
-        
-        // Clean up
-        activeVoteMutes.delete(voteKey);
       }
       
-      // Direct vote check function
-      async function checkVotes() {
-        // If vote already completed, do nothing
-        if (voteComplete) return;
-        
+      // MANUAL REACTION CHECKING LOOP
+      // This is the key change - we'll check reactions on a regular interval
+      // rather than relying on events which might be delayed or unreliable
+      
+      // Store the interval ID so we can clear it
+      let checkInterval = null;
+      
+      // Set up a manual check of reactions every 500ms
+      checkInterval = setInterval(async () => {
         try {
-          // Get fresh message with reactions
-          const message = await interaction.fetchReply();
-          const reaction = message.reactions.cache.get('👍');
-          
-          if (!reaction) {
-            console.log('No reactions found on vote message');
+          // Skip if mute already executed
+          if (muteExecuted) {
+            clearInterval(checkInterval);
             return;
           }
           
-          // Get users who reacted
-          const users = await reaction.users.fetch();
+          // Get the latest message with reactions
+          const latestMessage = await interaction.fetchReply();
+          const thumbsUpReaction = latestMessage.reactions.cache.get('👍');
           
-          // Get fresh voice channel members
-          const voiceChannel = guild.channels.cache.get(currentChannel);
-          if (!voiceChannel) {
+          if (!thumbsUpReaction) {
+            console.log('No thumbs up reaction found');
+            return;
+          }
+          
+          // Get all users who reacted
+          const users = await thumbsUpReaction.users.fetch();
+          
+          // Get the current voice channel members
+          const currentVoiceChannel = guild.channels.cache.get(currentChannel);
+          if (!currentVoiceChannel) {
             console.log('Voice channel no longer exists');
+            clearInterval(checkInterval);
             return endWithFailedVote();
           }
           
-          // Filter to get only valid votes
-          const validVoters = users.filter(user => 
-            user.id !== interaction.client.user.id && // Not the bot
-            user.id !== targetUser.id && // Not the target
-            voiceChannel.members.has(user.id) // Currently in the voice channel
+          // Filter to valid voters
+          const validVoters = users.filter(u => 
+            u.id !== interaction.client.user.id && // Not the bot
+            u.id !== targetUser.id && // Not the target
+            currentVoiceChannel.members.has(u.id) // In the voice channel
           );
           
           // Calculate current requirements
-          const currentMembers = voiceChannel.members.filter(m => m.id !== targetUser.id);
-          const currentRequired = Math.ceil(currentMembers.size / 2);
+          const currentEligibleVoters = currentVoiceChannel.members.filter(m => m.id !== targetUser.id).size;
+          const currentRequiredVotes = Math.ceil(currentEligibleVoters / 2);
           
-          console.log(`Current vote count: ${validVoters.size}/${currentRequired}`);
+          console.log(`Current vote count: ${validVoters.size}/${currentRequiredVotes} [Required: ${currentRequiredVotes}]`);
           
-          // Update the embed with current counts
-          if (!voteComplete) {
-            voteEmbed.setDescription(`${validVoters.size}/${currentMembers.size} votes to mute ${targetUser.toString()} (need ${currentRequired})`);
-            await interaction.editReply({ embeds: [voteEmbed] });
+          // Update the embed with current vote count
+          if (!muteExecuted) {
+            const updatedEmbed = new EmbedBuilder()
+              .setTitle('Vote Mute')
+              .setDescription(`${validVoters.size}/${currentEligibleVoters} votes to mute ${targetUser.toString()} (need ${currentRequiredVotes})`)
+              .setColor('#FF0000')
+              .setFooter({ text: 'React with 👍 to vote' })
+              .setTimestamp();
+            
+            await interaction.editReply({ embeds: [updatedEmbed] });
           }
           
-          // Check if vote passes
-          if (validVoters.size >= currentRequired) {
-            console.log('VOTE THRESHOLD MET - Executing mute immediately');
-            await executeVoteMute();
-          }
-        } catch (error) {
-          console.error('Error checking votes:', error);
-        }
-      }
-
-      // Set vote end timeout (20 seconds)
-      collectTimeout = setTimeout(async () => {
-        console.log('Vote time expired (20 seconds)');
-        
-        // Do one final vote check
-        try {
-          // Get fresh message with reactions
-          const message = await interaction.fetchReply();
-          const reaction = message.reactions.cache.get('👍');
-          
-          if (!reaction) {
-            return endWithFailedVote();
-          }
-          
-          // Get users who reacted
-          const users = await reaction.users.fetch();
-          
-          // Get fresh voice channel members
-          const voiceChannel = guild.channels.cache.get(currentChannel);
-          if (!voiceChannel) {
-            return endWithFailedVote();
-          }
-          
-          // Filter to get only valid votes
-          const validVoters = users.filter(user => 
-            user.id !== interaction.client.user.id && // Not the bot
-            user.id !== targetUser.id && // Not the target
-            voiceChannel.members.has(user.id) // Currently in the voice channel
-          );
-          
-          // Calculate current requirements
-          const currentMembers = voiceChannel.members.filter(m => m.id !== targetUser.id);
-          const currentRequired = Math.ceil(currentMembers.size / 2);
-          
-          console.log(`Final vote count: ${validVoters.size}/${currentRequired}`);
-          
-          // Check if vote passes
-          if (validVoters.size >= currentRequired) {
-            await executeVoteMute();
-          } else {
-            await endWithFailedVote();
+          // CHECK IF THRESHOLD MET - THIS IS THE CRITICAL PART
+          if (validVoters.size >= currentRequiredVotes) {
+            console.log(`THRESHOLD MET! ${validVoters.size}/${currentRequiredVotes} - Executing mute immediately`);
+            
+            // Stop checking
+            clearInterval(checkInterval);
+            
+            // Execute the mute
+            await executeMute();
           }
         } catch (error) {
-          console.error('Error in final vote check:', error);
-          await endWithFailedVote();
+          console.error('Error in reaction check interval:', error);
         }
-      }, 20000);
+      }, 500); // Check every 500ms
       
-      // Set up a collector to watch for reaction changes
-      const filter = (reaction, user) => reaction.emoji.name === '👍';
-      const collector = voteMessage.createReactionCollector({ filter, time: 20000 });
-      
-      // When a new reaction is added
-      collector.on('collect', async (reaction, user) => {
-        console.log(`Vote received from ${user.tag}`);
+      // Set timeout to end the vote after 20 seconds
+      setTimeout(() => {
+        // Clear the checking interval
+        if (checkInterval) clearInterval(checkInterval);
         
-        // Don't process if vote already completed
-        if (voteComplete) return;
-        
-        // Check if this vote makes us reach the threshold
-        await checkVotes();
-      });
-      
-      // When a reaction is removed
-      collector.on('remove', async (reaction, user) => {
-        console.log(`Vote removed by ${user.tag}`);
-        
-        // Don't process if vote already completed
-        if (voteComplete) return;
-        
-        // Update vote count
-        await checkVotes();
-      });
-      
-      // Initial vote count - Count the initiator's vote too
-      setTimeout(() => checkVotes(), 1000);
+        // If mute wasn't already executed, do one final check
+        if (!muteExecuted) {
+          (async () => {
+            try {
+              // Get the latest message with reactions
+              const finalMessage = await interaction.fetchReply();
+              const finalReaction = finalMessage.reactions.cache.get('👍');
+              
+              if (!finalReaction) {
+                return endWithFailedVote();
+              }
+              
+              // Get all users who reacted
+              const finalUsers = await finalReaction.users.fetch();
+              
+              // Get the current voice channel members
+              const finalVoiceChannel = guild.channels.cache.get(currentChannel);
+              if (!finalVoiceChannel) {
+                return endWithFailedVote();
+              }
+              
+              // Filter to valid voters
+              const finalValidVoters = finalUsers.filter(u => 
+                u.id !== interaction.client.user.id && // Not the bot
+                u.id !== targetUser.id && // Not the target
+                finalVoiceChannel.members.has(u.id) // In the voice channel
+              );
+              
+              // Calculate final requirements
+              const finalEligibleVoters = finalVoiceChannel.members.filter(m => m.id !== targetUser.id).size;
+              const finalRequiredVotes = Math.ceil(finalEligibleVoters / 2);
+              
+              console.log(`FINAL vote count: ${finalValidVoters.size}/${finalRequiredVotes}`);
+              
+              // Final threshold check
+              if (finalValidVoters.size >= finalRequiredVotes) {
+                console.log('Threshold met in final check!');
+                await executeMute();
+              } else {
+                console.log('Vote failed in final check');
+                await endWithFailedVote();
+              }
+            } catch (error) {
+              console.error('Error in final vote check:', error);
+              await endWithFailedVote();
+            }
+          })();
+        }
+      }, 20000); // 20 seconds
       
     } catch (error) {
       console.error('Error in vote mute command:', error);
