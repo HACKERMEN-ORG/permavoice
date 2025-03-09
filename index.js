@@ -15,6 +15,7 @@ const { isUserMuted, clearChannelMutes, hasExplicitAction, getExplicitAction, ad
 const reminderSystem = require('./methods/reminderSystem');
 const channelNameManager = require('./methods/customChannelNames');
 const auditLogger = require('./methods/auditLogger');
+const permanentOwnerManager = require('./methods/permanentOwner');
 
 
 // Import the submod manager
@@ -125,6 +126,36 @@ function readSettingsFile() {
 }
 
 /**
+ * Find permanent voice channels owned by a user
+ * @param {Guild} guild - The Discord guild
+ * @param {string} userId - The user ID to check
+ * @returns {Array} - Array of channel IDs owned by this user
+ */
+function findUserOwnedPermanentRooms(guild, userId) {
+    const ownedPermRooms = [];
+    
+    // Iterate through all voice channels in the guild
+    guild.channels.cache.forEach(channel => {
+        // Check if it's a voice channel and is marked as permanent
+        if (channel.type === ChannelType.GuildVoice && 
+            Settings.doesChannelHavePermVoice(guild.id, channel.id)) {
+            
+            // Check the permission overwrites to see if this user is the "owner"
+            // We have to check permission overwrites since we don't explicitly track permanent room owners
+            const userOverwrites = channel.permissionOverwrites.cache.get(userId);
+            if (userOverwrites && 
+                userOverwrites.allow.has(PermissionFlagsBits.Connect) &&
+                userOverwrites.allow.has(PermissionFlagsBits.Speak)) {
+                
+                ownedPermRooms.push(channel.id);
+            }
+        }
+    });
+    
+    return ownedPermRooms;
+}
+
+/**
  * Retrieves the key from a Map object based on the provided search value.
  *
  * @param {Map} map - The Map object to search in.
@@ -183,6 +214,14 @@ client.once(Events.ClientReady, async readyClient => {
     channelNameManager.loadChannelNamesData();
   } catch (error) {
     console.error('Error loading custom channel names data:', error);
+  }
+  
+  // Load permanent owner temp channel data
+  try {
+    permanentOwnerManager.loadData();
+    console.log('Permanent owner temp channel data loaded');
+  } catch (error) {
+    console.error('Error loading permanent owner data:', error);
   }
 
   // Load and validate channel data
@@ -384,6 +423,41 @@ client.on('voiceStateUpdate', (oldState, newState) => {
             
             // Check if the user already owns a channel
             let userAlreadyOwnsChannel = false;
+            let isPermanentOwner = false;
+            
+            // First check if they are a permanent channel owner with a temp channel
+            const existingTempChannel = permanentOwnerManager.getTempChannelForPermanentOwner(userId);
+            if (existingTempChannel) {
+                userAlreadyOwnsChannel = true;
+                isPermanentOwner = true;
+                
+                // Get the existing channel
+                const existingChannel = guild.channels.cache.get(existingTempChannel);
+                
+                // If the existing channel exists, move the user back to it
+                if (existingChannel) {
+                    console.log(`Permanent owner ${userId} already has temp channel ${existingTempChannel}, moving them back to it`);
+                    
+                    // Move them to their existing channel
+                    newState.member.voice.setChannel(existingChannel)
+                        .then(() => {
+                            // Notify the user they already have a channel
+                            existingChannel.send(`${newState.member.toString()}, as a permanent room owner, you already have an active temporary voice channel. You've been moved back to it.`);
+                        })
+                        .catch(error => console.error('Error moving user back to existing channel:', error));
+                    
+                    // Exit the function early to prevent creating a new channel
+                    return;
+                } else {
+                    // If the channel doesn't exist (was deleted), remove the stale entry
+                    console.log(`Removing stale permanent owner temp channel entry for user ${userId}, channel ${existingTempChannel}`);
+                    permanentOwnerManager.removeTempChannelForPermanentOwner(userId);
+                    userAlreadyOwnsChannel = false;
+                    isPermanentOwner = false;
+                }
+            }
+            
+            // Then continue with the regular check for standard temp channel ownership
             for (const [channelId, ownerId] of channelOwners.entries()) {
                 if (ownerId === userId) {
                     userAlreadyOwnsChannel = true;
@@ -469,10 +543,17 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 
                         // Set the channel's lock state to false, this can be adjusted by the user toggling the channel's lock state via /lock
                         toggleLock.set(channel.id, 0);
+                        
+                        // If this user owns a permanent room, track this temp channel
+                        const ownedPermRooms = findUserOwnedPermanentRooms(guild, userId);
+                        if (ownedPermRooms.length > 0) {
+                            console.log(`User ${userId} owns permanent rooms but just created temp room ${channel.id}, tracking this`);
+                            permanentOwnerManager.setTempChannelForPermanentOwner(userId, channel.id);
+                        }
 
                         const embed = new EmbedBuilder()
                             .setTitle("🎮 **Voice Channel Controls**")
-                            .setDescription("**🔸 Welcome to your custom voice channel! 🔸**\n\n**Owner Commands:**\n`/mute` - Mute a user in your channel\n`/unmute` - Unmute a user in your channel\n`/kick` - Kick a user from the channel\n`/ban` - Ban a user from your channel\n`/unban` - Unban a user from your channel\n`/listmuted` - View all muted users\n`/listbanned` - View all banned users\n`/submod` - Add a submoderator to the channel\n`/unsubmod` - Remove a submoderator\n`/listsubmods` - View all submoderators\n`/rename` - Rename your channel (will remember for future channels)\n\n**⚠️ For Everyone: Dealing with Disruptive Users ⚠️**\n`/votemute` - Anyone can start a vote to mute a disruptive member for 5 minutes\n\n**⭐ Remember: Anyone can create their own voice room by joining the '+ CREATE' channel! ⭐**")
+                            .setDescription("**🔸 Welcome to your custom voice channel! 🔸**\n\n**Owner Commands:**\n`/mute` - Mute a user in your channel\n`/unmute` - Unmute a user in your channel\n`/kick` - Kick a user from the channel\n`/ban` - Ban a user from your channel\n`/unban` - Unban a user from your channel\n`/listmuted` - View all muted users\n`/listbanned` - View all banned users\n`/submod` - Add a submoderator to the channel\n`/unsubmod` - Remove a submoderator\n`/listsubmods` - View all submoderators\n`/rename` - Rename your channel (will remember for future channels)\n\n**⚠️ For Everyone: Dealing with Disruptive Users ⚠️**\n`/votemute` - Anyone can start a vote to mute a disruptive member for 5 minutes\n`/claim` - Claim ownership of a temporary channel if the owner has left\n\n**⭐ Remember: Anyone can create their own voice room by joining the '+ CREATE' channel! ⭐**\n**⭐ Permanent room owners: You can only have one temporary room at a time! ⭐**")
                             .setColor("#FF5500")
                             .setTimestamp();
 
@@ -541,6 +622,13 @@ client.on('voiceStateUpdate', (oldState, newState) => {
                     if (submodManager && typeof submodManager.clearChannelSubmods === 'function') {
                         submodManager.clearChannelSubmods(oldChannel.id);
                     }
+                    
+                    // Check if the deleted channel was owned by a permanent room owner
+                    const permanentOwnerId = permanentOwnerManager.getPermanentOwnerForTempChannel(oldChannel.id);
+                    if (permanentOwnerId) {
+                        console.log(`Removing permanent owner ${permanentOwnerId}'s temp channel mapping for deleted channel ${oldChannel.id}`);
+                        permanentOwnerManager.removeTempChannelForPermanentOwner(permanentOwnerId);
+                    }
 
                     // Delete the channel
                     oldChannel.delete()
@@ -566,6 +654,13 @@ client.on('voiceStateUpdate', (oldState, newState) => {
                 // Clear submods data
                 if (submodManager && typeof submodManager.clearChannelSubmods === 'function') {
                     submodManager.clearChannelSubmods(oldChannel.id);
+                }
+                
+                // Check if the deleted channel was owned by a permanent room owner
+                const permanentOwnerId = permanentOwnerManager.getPermanentOwnerForTempChannel(oldChannel.id);
+                if (permanentOwnerId) {
+                    console.log(`Removing permanent owner ${permanentOwnerId}'s temp channel mapping for deleted channel ${oldChannel.id}`);
+                    permanentOwnerManager.removeTempChannelForPermanentOwner(permanentOwnerId);
                 }
 
                 // Delete the channel
