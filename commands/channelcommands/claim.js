@@ -60,8 +60,9 @@ module.exports = {
       
       // At this point, we know:
       // 1. The channel is a temporary channel
-      // 2. The current owner is not in the channel
-      // 3. The user is in the channel
+      // 2. The channel is NOT a permanent voice channel
+      // 3. The current owner is not in the channel
+      // 4. The user is in the channel
       
       // Update the channel owner
       const oldOwnerId = channelOwners.get(currentChannel);
@@ -96,7 +97,7 @@ module.exports = {
       console.error('Error in claim command:', error);
       
       if (interaction.deferred) {
-        await interaction.editReply({ content: 'There was an error while using the command.', ephemeral: true });
+        await interaction.editReply({ content: 'There was an error while executing the command.', ephemeral: true });
       }
     }
   },
