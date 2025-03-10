@@ -166,49 +166,66 @@ module.exports = {
         console.log(`[MUTE EXECUTION] Muting ${targetUser.tag} for ${muteDuration} minutes`);
         
         try {
-          // 1. Update the embed to show success
-          const successEmbed = new EmbedBuilder()
-            .setTitle('Vote Mute')
-            .setDescription(`Vote passed! ${targetUser.toString()} has been muted for ${muteDuration} minute${muteDuration !== 1 ? 's' : ''}`)
-            .setColor('#00FF00')
-            .setTimestamp();
-          
-          await interaction.editReply({ embeds: [successEmbed] });
-          
-          // Get fresh message data for voter count
-          const message = await interaction.fetchReply();
-          const thumbsUp = message.reactions.cache.get('👍');
-          
-          // Get valid voters for audit log
-          const users = await thumbsUp.users.fetch();
-          const validVoters = users.filter(u => 
-            u.id !== interaction.client.user.id && // Not the bot
-            u.id !== targetUser.id && // Not the target
-            voteStatus.initialEligibleVoterIds.has(u.id) // Was an eligible voter at start
-          );
-          
-          // 2. Add to our mute tracking
+          // Add to our mute tracking right away
           addMutedUser(currentChannel, targetUser.id);
           
-          // 3. Actually mute the user
+          // Immediately apply the mute - run this first to reduce perceived lag
           try {
-            const freshTarget = await guild.members.fetch(targetUser.id);
-            if (freshTarget.voice.channel && freshTarget.voice.channel.id === currentChannel) {
-              await freshTarget.voice.setMute(true, 'Vote mute');
-              console.log(`[MUTE SUCCESS] Server mute applied to ${targetUser.tag}`);
-              
-              // Announce successful mute
-              await voiceChannel.send(`${targetUser.toString()} has been muted for ${muteDuration} minute${muteDuration !== 1 ? 's' : ''} by vote.`);
+            // Do this first and don't await it yet - we can do other things in parallel
+            const mutePromise = guild.members.fetch(targetUser.id)
+              .then(freshTarget => {
+                if (freshTarget.voice.channel && freshTarget.voice.channel.id === currentChannel) {
+                  return freshTarget.voice.setMute(true, 'Vote mute');
+                }
+              })
+              .catch(muteError => {
+                console.error('[MUTE ERROR] Failed to apply server mute:', muteError);
+              });
+            
+            // Start UI updates in parallel
+            // 1. Update the embed to show success
+            const successEmbed = new EmbedBuilder()
+              .setTitle('Vote Mute')
+              .setDescription(`Vote passed! ${targetUser.toString()} has been muted for ${muteDuration} minute${muteDuration !== 1 ? 's' : ''}`)
+              .setColor('#00FF00')
+              .setTimestamp();
+            
+            const uiPromise = interaction.editReply({ embeds: [successEmbed] });
+            
+            // Wait for the mute to complete before continuing
+            await mutePromise;
+            console.log(`[MUTE SUCCESS] Server mute applied to ${targetUser.tag}`);
+            
+            // Wait for UI update to complete
+            await uiPromise;
+            
+            // Announce successful mute
+            voiceChannel.send(`${targetUser.toString()} has been muted for ${muteDuration} minute${muteDuration !== 1 ? 's' : ''} by vote.`)
+              .catch(e => console.error('Error sending mute notification:', e));
+            
+            // Get vote count for audit log (do this after the mute is applied)
+            const message = await interaction.fetchReply();
+            const thumbsUp = message.reactions.cache.get('👍');
+            let validVoters = { size: 0 };
+            
+            if (thumbsUp) {
+              const users = await thumbsUp.users.fetch();
+              validVoters = users.filter(u => 
+                u.id !== interaction.client.user.id && // Not the bot
+                u.id !== targetUser.id && // Not the target
+                voteStatus.initialEligibleVoterIds.has(u.id) // Was an eligible voter at start
+              );
             }
+            
+            // Log the vote mute (non-blocking)
+            auditLogger.logVoteMute(guild.id, voiceChannel, targetUser, interaction.user, true, validVoters.size)
+              .catch(e => console.error('Error logging vote mute:', e));
           } catch (muteError) {
             console.error('[MUTE ERROR] Failed to apply server mute:', muteError);
             // Even if server mute fails, the user is still tracked as muted in our system
           }
           
-          // Log the vote mute
-          auditLogger.logVoteMute(guild.id, voiceChannel, targetUser, interaction.user, true, validVoters.size);
-          
-          // 4. Clean up
+          // Clean up
           activeVoteMutes.delete(voteKey);
           
           // 5. Set unmute timer - converted to milliseconds
