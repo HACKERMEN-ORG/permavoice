@@ -140,13 +140,13 @@ function findUserOwnedPermanentRooms(guild, userId) {
         if (channel.type === ChannelType.GuildVoice && 
             Settings.doesChannelHavePermVoice(guild.id, channel.id)) {
             
-            // Check the permission overwrites to see if this user is the "owner"
-            // We have to check permission overwrites since we don't explicitly track permanent room owners
+            // Check if this user has owner-level permissions for this channel
             const userOverwrites = channel.permissionOverwrites.cache.get(userId);
             if (userOverwrites && 
                 userOverwrites.allow.has(PermissionFlagsBits.Connect) &&
                 userOverwrites.allow.has(PermissionFlagsBits.Speak)) {
                 
+                console.log(`Found permanent voice channel ${channel.id} owned by ${userId}`);
                 ownedPermRooms.push(channel.id);
             }
         }
@@ -420,63 +420,53 @@ client.on('voiceStateUpdate', (oldState, newState) => {
 if (newState.channelId && newState.channelId === settings.voiceChannelId) {
     try {
         const userId = newState.member.id;
+        console.log(`User ${userId} (${newState.member.user.username}) joined the create channel`);
         
-        // First check if they have an existing temporary channel (via permanentOwnerManager)
-        const existingTempChannel = permanentOwnerManager.getTempChannelForPermanentOwner(userId);
-        if (existingTempChannel) {
-            // Get the existing channel
-            const existingChannel = guild.channels.cache.get(existingTempChannel);
-            
-            // If the existing channel exists, move the user back to it
-            if (existingChannel) {
-                console.log(`User ${userId} already has temp channel ${existingTempChannel}, moving them back to it`);
-                
-                // Move them to their existing channel
-                newState.member.voice.setChannel(existingChannel)
-                    .then(() => {
-                        // Notify the user they already have a channel and suggest transferring ownership
-                        existingChannel.send(`${newState.member.toString()}, you already have an active temporary voice channel. You've been moved back to it. Use \`/transferownership\` if you want to transfer this channel to someone else before creating a new one.`);
-                    })
-                    .catch(error => console.error('Error moving user back to existing channel:', error));
-                
-                // Exit the function early to prevent creating a new channel
-                return;
-            } else {
-                // If the channel doesn't exist (was deleted), remove the stale entry
-                console.log(`Removing stale temp channel entry for user ${userId}, channel ${existingTempChannel}`);
-                permanentOwnerManager.removeTempChannelForPermanentOwner(userId);
+        // Debug log to trace all permanent voice channels in the guild
+        console.log("Permanent channels in this guild:");
+        guild.channels.cache.forEach(channel => {
+            if (channel.type === ChannelType.GuildVoice && Settings.doesChannelHavePermVoice(guild.id, channel.id)) {
+                console.log(`Permanent channel: ${channel.name} (${channel.id})`);
             }
-        }
+        });
+
+        // First, check if this user already has a temporary channel via channelOwners
+        let existingTemporaryChannelId = null;
         
-        // Next, check if they own a temporary channel in the channelOwners collection
-        let hasTempChannel = false;
-        let tempChannelId = null;
-        
+        // Step 1: Look through channelOwners for any channel owned by this user
         for (const [channelId, ownerId] of channelOwners.entries()) {
             if (ownerId === userId) {
-                // Skip permanent voice channels - they shouldn't prevent temp channel creation
-                if (Settings.doesChannelHavePermVoice(guild.id, channelId)) {
-                    continue;
-                }
+                // Check if it's a permanent voice channel
+                const isPermanent = Settings.doesChannelHavePermVoice(guild.id, channelId);
+                console.log(`Found channel ${channelId} owned by ${userId}, isPermanent: ${isPermanent}`);
                 
-                // This is a temporary channel owned by the user
-                hasTempChannel = true;
-                tempChannelId = channelId;
-                break;
+                // Only store if it's NOT a permanent channel
+                if (!isPermanent) {
+                    existingTemporaryChannelId = channelId;
+                    console.log(`User ${userId} already owns temporary channel ${channelId}`);
+                    break;
+                }
             }
         }
         
-        // If they own a temporary channel, redirect them there
-        if (hasTempChannel && tempChannelId) {
-            const existingChannel = guild.channels.cache.get(tempChannelId);
+        // Step 2: Check if this user has a registered temporary channel as a permanent owner
+        const registeredTempChannel = permanentOwnerManager.getTempChannelForPermanentOwner(userId);
+        if (registeredTempChannel) {
+            console.log(`Found registered temp channel ${registeredTempChannel} for permanent owner ${userId}`);
+            existingTemporaryChannelId = registeredTempChannel;
+        }
+        
+        // Step 3: Verify the existing channel actually exists and redirect if it does
+        if (existingTemporaryChannelId) {
+            const existingChannel = guild.channels.cache.get(existingTemporaryChannelId);
             
             if (existingChannel) {
-                console.log(`User ${userId} already owns temp channel ${tempChannelId}, moving them back to it`);
+                console.log(`Redirecting user ${userId} to their existing temp channel ${existingTemporaryChannelId}`);
                 
                 // Move them to their existing channel
                 newState.member.voice.setChannel(existingChannel)
                     .then(() => {
-                        // Notify the user they already have a channel and suggest transferring ownership
+                        // Notify the user they already have a channel
                         existingChannel.send(`${newState.member.toString()}, you already have an active temporary voice channel. You've been moved back to it. Use \`/transferownership\` if you want to transfer this channel to someone else before creating a new one.`);
                     })
                     .catch(error => console.error('Error moving user back to existing channel:', error));
@@ -484,15 +474,23 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
                 // Exit the function early to prevent creating a new channel
                 return;
             } else {
-                // If the channel doesn't exist (was deleted), remove the stale entry
-                console.log(`Removing stale channel owner entry for user ${userId}, channel ${tempChannelId}`);
-                channelOwners.delete(tempChannelId);
-                hasTempChannel = false;
+                // Channel doesn't exist anymore, clean up the references
+                console.log(`Channel ${existingTemporaryChannelId} no longer exists, cleaning up references`);
+                
+                if (channelOwners.has(existingTemporaryChannelId)) {
+                    channelOwners.delete(existingTemporaryChannelId);
+                }
+                
+                if (permanentOwnerManager.getTempChannelForPermanentOwner(userId) === existingTemporaryChannelId) {
+                    permanentOwnerManager.removeTempChannelForPermanentOwner(userId);
+                }
             }
         }
         
-        // If we've reached here, the user doesn't have any active temporary channel
-        // Create a new temporary channel for them
+        // At this point, we know the user doesn't have an existing valid temporary channel
+        // So we can create a new one for them
+        console.log(`Creating new temporary channel for user ${userId}`);
+        
         const category = guild.channels.cache.get(settings.category);
         if (category && category.type === ChannelType.GuildCategory) {
             // Check if the user has a custom channel name
@@ -517,6 +515,8 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
                 ],
             })
             .then(channel => {
+                console.log(`Successfully created channel ${channel.id} for user ${userId}`);
+                
                 // Move the user to the new channel
                 newState.member.voice.setChannel(channel)
                     .then(() => {
@@ -534,8 +534,6 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
                     })
                     .catch(error => console.error('Error moving user to new channel:', error));
 
-                console.log(`Created voice channel: ${channel.name}`);
-
                 // Set the owner of the channel to the user who created the channel
                 channelOwners.set(channel.id, newState.member.id);
 
@@ -546,9 +544,12 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
                 toggleLock.set(channel.id, 0);
                 
                 // If this user owns a permanent room, track this temp channel
+                // Use our function to find permanent rooms owned by this user
                 const ownedPermRooms = findUserOwnedPermanentRooms(guild, userId);
+                console.log(`User ${userId} owns ${ownedPermRooms.length} permanent rooms:`, ownedPermRooms);
+                
                 if (ownedPermRooms.length > 0) {
-                    console.log(`User ${userId} owns permanent rooms but just created temp room ${channel.id}, tracking this`);
+                    console.log(`Setting permanent owner ${userId}'s temp channel to ${channel.id}`);
                     permanentOwnerManager.setTempChannelForPermanentOwner(userId, channel.id);
                 }
 
