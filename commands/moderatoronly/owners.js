@@ -92,7 +92,7 @@ module.exports = {
             ownerInfo = `Multiple possible owners: ${ownerIds.map(id => `<@${id}>`).join(', ')}`;
           }
           
-          permDescription += `**${channel.name}** (<#${channelId}>)\n`;
+          permDescription += `**${channel.name}** (<#${channelId}>) - PERMANENT\n`;
           permDescription += `• Owner: ${ownerInfo}\n`;
           permDescription += `• Members: ${channel.members.size}\n\n`;
         }
@@ -150,7 +150,7 @@ module.exports = {
             submodsInfo = submodList.join(', ');
           }
           
-          tempDescription += `**${channel.name}** (<#${channelId}>)\n`;
+          tempDescription += `**${channel.name}** (<#${channelId}>) - TEMPORARY\n`;
           tempDescription += `• Owner: ${ownerInfo}\n`;
           tempDescription += `• Submods: ${submodsInfo}\n`;
           tempDescription += `• Members: ${channel.members.size}\n\n`;
