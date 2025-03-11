@@ -422,65 +422,57 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
         const userId = newState.member.id;
         console.log(`User ${userId} joined the create channel`);
         
-        // EMERGENCY WORKAROUND:
-        // First, let's check if the user has an ACTUAL temporary voice channel
-        // (not a permanent one that's incorrectly being detected)
-        let hasExistingTempChannel = false;
+        // Skip permanent room owner check entirely - let everyone create a temp channel
+        // We'll just clean up any existing temp channels they might have
+        
+        // Check if user has an existing temporary channel
         let existingTempChannelId = null;
         
-        // 1. First check if they are in the permanentOwnerManager
+        // If they're in the permanentOwnerManager, get their existing temp channel
         const tempChannelFromManager = permanentOwnerManager.getTempChannelForPermanentOwner(userId);
         if (tempChannelFromManager) {
             const channel = guild.channels.cache.get(tempChannelFromManager);
             if (channel && channel.type === ChannelType.GuildVoice) {
-                hasExistingTempChannel = true;
                 existingTempChannelId = tempChannelFromManager;
                 console.log(`User has existing temp channel (from manager): ${existingTempChannelId}`);
+                
+                // If this temp channel exists and isn't empty, we need to preserve it
+                if (channel.members.size > 0) {
+                    // Move user back to existing temp channel only if it's not empty
+                    console.log(`Moving user to existing non-empty temp channel: ${existingTempChannelId}`);
+                    
+                    newState.member.voice.setChannel(channel)
+                        .then(() => {
+                            channel.send(`${newState.member.toString()}, you already have an active temporary voice channel with users in it. Use \`/transferownership\` if you want to transfer this channel to someone else before creating a new one.`);
+                        })
+                        .catch(error => console.error('Error moving user to existing channel:', error));
+                    
+                    return; // Exit early
+                } else {
+                    // If the channel is empty, let's clean it up so they can create a new one
+                    console.log(`Removing empty temp channel: ${existingTempChannelId}`);
+                    
+                    try {
+                        // Remove from tracking
+                        permanentOwnerManager.removeTempChannelForPermanentOwner(userId);
+                        channelOwners.delete(existingTempChannelId);
+                        togglePrivate.delete(existingTempChannelId);
+                        toggleLock.delete(existingTempChannelId);
+                        
+                        // Delete the empty channel
+                        channel.delete()
+                            .catch(error => console.error('Error deleting empty temp channel:', error));
+                    } catch (error) {
+                        console.error('Error cleaning up empty temp channel:', error);
+                    }
+                }
             } else {
-                // Clean up stale entry
+                // Clean up stale entry if channel doesn't exist
                 permanentOwnerManager.removeTempChannelForPermanentOwner(userId);
             }
         }
         
-        // 2. If not found, manually check for a non-permanent channel in channelOwners
-        if (!hasExistingTempChannel) {
-            for (const [channelId, ownerId] of channelOwners.entries()) {
-                if (ownerId === userId) {
-                    // CRITICAL: Explicitly verify if this is a permanent channel by directly calling Settings
-                    // This bypasses any potential issues with the channel detection logic
-                    const isPermanentChannel = Settings.doesChannelHavePermVoice(guild.id, channelId);
-                    console.log(`Channel ${channelId} owned by ${userId}, isPermanent: ${isPermanentChannel}`);
-                    
-                    if (!isPermanentChannel) {
-                        // Only count non-permanent channels
-                        const channel = guild.channels.cache.get(channelId);
-                        if (channel && channel.type === ChannelType.GuildVoice) {
-                            hasExistingTempChannel = true;
-                            existingTempChannelId = channelId;
-                            console.log(`User has existing temp channel (from channel owners): ${existingTempChannelId}`);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        
-        // If they have an existing, valid temporary voice channel, move them there
-        if (hasExistingTempChannel && existingTempChannelId) {
-            console.log(`Moving user to existing temp channel: ${existingTempChannelId}`);
-            const existingChannel = guild.channels.cache.get(existingTempChannelId);
-            
-            // Move user to existing channel
-            newState.member.voice.setChannel(existingChannel)
-                .then(() => {
-                    existingChannel.send(`${newState.member.toString()}, you already have an active temporary voice channel. You've been moved back to it. Use \`/transferownership\` if you want to transfer this channel to someone else before creating a new one.`);
-                })
-                .catch(error => console.error('Error moving user to existing channel:', error));
-                
-            return; // Exit early
-        }
-        
-        // If we get here, create a new channel regardless of permanent room ownership
+        // If we made it here, we're creating a new channel
         console.log(`Creating new temporary channel for user ${userId}`);
         
         const category = guild.channels.cache.get(settings.category);
@@ -530,7 +522,7 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
                 toggleLock.set(channel.id, 0);
                 
                 // Check if this user might be a permanent room owner
-                // Doing a basic channel scan to be safe
+                // We need to track this for future temp room creations
                 let mightOwnPermanentRoom = false;
                 guild.channels.cache.forEach(c => {
                     if (c.type === ChannelType.GuildVoice && 
@@ -553,7 +545,7 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
 
                 const embed = new EmbedBuilder()
                     .setTitle("🎮 **Voice Channel Controls**")
-                    .setDescription("**🔸 Welcome to your custom voice channel! 🔸**\n\n**Owner Commands:**\n`/mute` - Mute a user in your channel\n`/unmute` - Unmute a user in your channel\n`/kick` - Kick a user from the channel\n`/ban` - Ban a user from your channel\n`/unban` - Unban a user from your channel\n`/listmuted` - View all muted users\n`/listbanned` - View all banned users\n`/submod` - Add a submoderator to the channel\n`/unsubmod` - Remove a submoderator\n`/listsubmods` - View all submoderators\n`/rename` - Rename your channel (will remember for future channels)\n\n**⚠️ For Everyone: Dealing with Disruptive Users ⚠️**\n`/votemute` - Anyone can start a vote to mute a disruptive member for 5 minutes\n`/claim` - Claim ownership of a temporary channel if the owner has left\n\n**⭐ Remember: Anyone can create their own voice room by joining the '+ CREATE' channel! ⭐**\n**⭐ Permanent room owners: You can only have one temporary room at a time! ⭐**")
+                    .setDescription("**🔸 Welcome to your custom voice channel! 🔸**\n\n**Owner Commands:**\n`/mute` - Mute a user in your channel\n`/unmute` - Unmute a user in your channel\n`/kick` - Kick a user from the channel\n`/ban` - Ban a user from your channel\n`/unban` - Unban a user from your channel\n`/listmuted` - View all muted users\n`/listbanned` - View all banned users\n`/submod` - Add a submoderator to the channel\n`/unsubmod` - Remove a submoderator\n`/listsubmods` - View all submoderators\n`/rename` - Rename your channel (will remember for future channels)\n\n**⚠️ For Everyone: Dealing with Disruptive Users ⚠️**\n`/votemute` - Anyone can start a vote to mute a disruptive member for 5 minutes\n`/claim` - Claim ownership of a temporary channel if the owner has left\n\n**⭐ Remember: Anyone can create their own voice room by joining the '+ CREATE' channel! ⭐**")
                     .setColor("#FF5500")
                     .setTimestamp();
 
