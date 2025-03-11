@@ -60,9 +60,9 @@ module.exports = {
       // This is critical so the voice state handler respects this action
       removeMutedUser(currentChannel, targetUser.id);
       console.log(`Unmuting ${targetUser.id} in channel ${currentChannel} (command)`);
-      // Log the unmute action
-const targetChannel = guild.channels.cache.get(currentChannel);
-auditLogger.logUserUnmute(guild.id, targetChannel, targetUser, member.user);
+      
+      // Get the channel for audit logging
+      const targetChannel = guild.channels.cache.get(currentChannel);
       
       try {
         // Fetch the target member
@@ -74,19 +74,23 @@ auditLogger.logUserUnmute(guild.id, targetChannel, targetUser, member.user);
             // Unmute the user in this channel
             await targetMember.voice.setMute(false, 'Channel moderation unmuted user');
             console.log(`Successfully unmuted ${targetUser.id} via command`);
-            // Log the unmute action
-              const targetChannel = guild.channels.cache.get(currentChannel);
-              auditLogger.logUserUnmute(guild.id, targetChannel, targetUser, member.user);
           } catch (muteError) {
             console.error('Error unmuting user:', muteError);
             // Continue anyway - the user is tracked as unmuted in our system
           }
         }
         
+        // Log the unmute action - only log it once here, after we've done everything
+        auditLogger.logUserUnmute(guild.id, targetChannel, targetUser, member.user);
+        
         return await interaction.editReply({ content: `${targetUser.username} has been unmuted.` });
       } catch (memberError) {
         console.error('Error fetching member for unmute:', memberError);
         // Continue anyway since we've already updated our tracking system
+        
+        // Log the unmute action here too in case we couldn't fetch the member
+        auditLogger.logUserUnmute(guild.id, targetChannel, targetUser, member.user);
+        
         return await interaction.editReply({ content: `${targetUser.username} has been unmuted.` });
       }
     } catch (error) {
