@@ -16,6 +16,7 @@ const reminderSystem = require('./methods/reminderSystem');
 const channelNameManager = require('./methods/customChannelNames');
 const auditLogger = require('./methods/auditLogger');
 const permanentOwnerManager = require('./methods/permanentOwner');
+const { createWelcomeEmbed } = require('./methods/welcomeMessage');
 
 
 // Import the submod manager
@@ -492,6 +493,17 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             
             console.log(`Created new voice channel: ${channelName} (${createdChannel.id}) for ${member.user.username}`);
             
+            try {
+                const welcomeEmbed = createWelcomeEmbed();
+                await createdChannel.send({ 
+                  content: `<@${member.id}> Welcome to your new voice channel!`,
+                  embeds: [welcomeEmbed] 
+                });
+                console.log(`Sent welcome message to new channel: ${createdChannel.name} (${createdChannel.id})`);
+              } catch (error) {
+                console.error(`Error sending welcome message to channel ${createdChannel.id}:`, error);
+              }
+
             // Log the channel creation
             auditLogger.logChannelCreation(guild.id, createdChannel, member.user);
             
