@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionsBitField } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 const Settings = require('../../Settings.js');
@@ -24,14 +24,14 @@ module.exports = {
       
       const currentChannel = member.voice.channel.id;
       
+      // First check if the channel is a permanent voice channel - this is the important check
+      if (Settings.doesChannelHavePermVoice(guild.id, currentChannel)) {
+        return interaction.editReply({ content: 'This is a permanent voice channel and cannot be claimed.', ephemeral: true });
+      }
+      
       // Check if the channel is a temporary channel
       if (!channelOwners.has(currentChannel)) {
         return interaction.editReply({ content: 'You must be in a temporary channel to use this command.', ephemeral: true });
-      }
-      
-      // Check if the channel is a permanent voice channel
-      if (Settings.doesChannelHavePermVoice(guild.id, currentChannel)) {
-        return interaction.editReply({ content: 'This is a permanent voice channel and cannot be claimed.', ephemeral: true });
       }
       
       // Get the current owner
