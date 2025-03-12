@@ -373,7 +373,7 @@ module.exports = {
           try {
             const updatedEmbed = new EmbedBuilder()
               .setTitle('Vote Mute')
-              .setDescription(`${displayRequiredVotes} vote${displayRequiredVotes !== 1 ? 's' : ''} required to mute ${targetUser.toString()} for ${muteDuration} minute${muteDuration !== 1 ? 's' : ''}\nVote ends in ${seconds} seconds`)
+              .setDescription(`${displayRequiredVotes + 1} 👍${displayRequiredVotes !== 1 ? 's' : ''} required to mute ${targetUser.toString()} for ${muteDuration} minute${muteDuration !== 1 ? 's' : ''}\nVote ends in ${seconds} seconds`)
               .setColor('#FF0000')
               .setFooter({ text: 'React with 👍 to vote' })
               .setTimestamp();
@@ -407,7 +407,7 @@ module.exports = {
           // Execute the mute right away
           await muteTarget();
         }
-      }, 250);
+      }, 2000);
       
       // ===== MAIN VOTE TIMER =====
       // This ensures the vote always ends after 20 seconds
