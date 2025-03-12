@@ -139,7 +139,7 @@ module.exports = {
       // Create vote embed with the display vote count
       const voteEmbed = new EmbedBuilder()
         .setTitle('Vote Mute')
-        .setDescription(`${displayRequiredVotes} vote${displayRequiredVotes !== 1 ? 's' : ''} required to mute ${targetUser.toString()} for ${muteDuration} minute${muteDuration !== 1 ? 's' : ''}\nVote ends in 20 seconds`)
+        .setDescription(`${displayRequiredVotes + 1} 👍 required to mute ${targetUser.toString()} for ${muteDuration} minute${muteDuration !== 1 ? 's' : ''}\nVote ends in 20 seconds`)
         .setColor('#FF0000')
         .setFooter({ text: 'React with 👍 to vote' })
         .setTimestamp();
@@ -373,7 +373,7 @@ module.exports = {
           try {
             const updatedEmbed = new EmbedBuilder()
               .setTitle('Vote Mute')
-              .setDescription(`${displayRequiredVotes + 1} 👍${displayRequiredVotes !== 1 ? 's' : ''} required to mute ${targetUser.toString()} for ${muteDuration} minute${muteDuration !== 1 ? 's' : ''}\nVote ends in ${seconds} seconds`)
+              .setDescription(`${displayRequiredVotes + 1} 👍 required to mute ${targetUser.toString()} for ${muteDuration} minute${muteDuration !== 1 ? 's' : ''}\nVote ends in ${seconds} seconds`)
               .setColor('#FF0000')
               .setFooter({ text: 'React with 👍 to vote' })
               .setTimestamp();
