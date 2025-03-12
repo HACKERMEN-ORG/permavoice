@@ -462,9 +462,59 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         return;
     }
 
-    // Handle joining the create channel
-    if (newState.channelId && newState.channelId === settings.voiceChannelId) {
-        // CREATE CHANNEL LOGIC - unchanged from original
+      // Handle joining the create channel
+      if (newState.channelId && newState.channelId === settings.voiceChannelId) {
+        try {
+            // Get the user who joined
+            const member = newState.member;
+            
+            // Get the channel name - either custom or default
+            let channelName = `${member.user.username}'s channel`;
+            const customName = channelNameManager.getCustomChannelName(member.id);
+            if (customName) {
+                channelName = customName;
+            }
+            
+            // Create the channel in the same category
+            const createdChannel = await guild.channels.create({
+                name: channelName,
+                type: ChannelType.GuildVoice,
+                parent: settings.category
+            });
+            
+            // Move the member to the new channel
+            await member.voice.setChannel(createdChannel);
+            
+            // Set the owner of the new channel
+            channelOwners.set(createdChannel.id, member.id);
+            togglePrivate.set(createdChannel.id, 0);
+            toggleLock.set(createdChannel.id, 0);
+            
+            console.log(`Created new voice channel: ${channelName} (${createdChannel.id}) for ${member.user.username}`);
+            
+            // Log the channel creation
+            auditLogger.logChannelCreation(guild.id, createdChannel, member.user);
+            
+            // If this user owns permanent voice channels, track this temp channel for them
+            const ownedPermRooms = Array.from(guild.channels.cache.values())
+                .filter(channel => 
+                    channel.type === ChannelType.GuildVoice && 
+                    Settings.doesChannelHavePermVoice(guild.id, channel.id)
+                )
+                .filter(channel => {
+                    const userPerms = channel.permissionOverwrites.cache.get(member.id);
+                    return userPerms && 
+                           userPerms.allow.has(PermissionFlagsBits.Connect) &&
+                           userPerms.allow.has(PermissionFlagsBits.Speak);
+                });
+                
+            if (ownedPermRooms.length > 0) {
+                permanentOwnerManager.setTempChannelForPermanentOwner(member.id, createdChannel.id);
+                console.log(`User ${member.id} owns permanent rooms, tracking temp channel ${createdChannel.id}`);
+            }
+        } catch (error) {
+            console.error("Error creating voice channel:", error);
+        }
     }
 
     // Handle the channel deletion if the channel is empty
