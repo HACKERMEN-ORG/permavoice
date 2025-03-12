@@ -139,7 +139,7 @@ module.exports = {
       // Create vote embed with the display vote count
       const voteEmbed = new EmbedBuilder()
         .setTitle('Vote Mute')
-        .setDescription(`${displayRequiredVotes + 1} 👍 required to mute ${targetUser.toString()} for ${muteDuration} minute${muteDuration !== 1 ? 's' : ''}\nVote ends in 20 seconds`)
+        .setDescription(`${displayRequiredVotes + 1} 👍 required to mute ${targetUser.toString()} for ${muteDuration} minute${muteDuration !== 1 ? 's' : ''}\nVote ends in 30 seconds`)
         .setColor('#FF0000')
         .setFooter({ text: 'React with 👍 to vote' })
         .setTimestamp();
@@ -362,7 +362,7 @@ module.exports = {
       
       // ===== COUNTDOWN TIMER SETUP =====
       // Update the embed at specific intervals
-      const countdownTimes = [15, 10, 5, 4, 3, 2, 1];
+      const countdownTimes = [25, 20, 15, 10, 5, 4, 3, 2, 1];
       
       // Schedule the countdown updates
       for (const seconds of countdownTimes) {
@@ -382,7 +382,7 @@ module.exports = {
           } catch (error) {
             console.error(`[COUNTDOWN ERROR] at ${seconds}s:`, error);
           }
-        }, (20 - seconds) * 1000);
+        }, (30 - seconds) * 1000);
       }
       
       // ===== VOTE CHECK LOOP =====
@@ -410,14 +410,14 @@ module.exports = {
       }, 2000);
       
       // ===== MAIN VOTE TIMER =====
-      // This ensures the vote always ends after 20 seconds
+      // This ensures the vote always ends after 30 seconds
       setTimeout(async () => {
         // Stop checking for votes
         clearInterval(voteCheckInterval);
         
         // Only proceed if not already completed
         if (!voteStatus.completed) {
-          console.log('[TIMER EXPIRED] 20 seconds elapsed, finalizing vote');
+          console.log('[TIMER EXPIRED] 30 seconds elapsed, finalizing vote');
           
           // Check one last time
           const finalCheck = await checkVotes();
@@ -431,16 +431,16 @@ module.exports = {
             await failVote();
           }
         }
-      }, 20000);
+      }, 30000);
       
       // ===== FAILSAFE =====
       // Ultimate backup in case something goes wrong
       setTimeout(() => {
         if (!voteStatus.completed) {
-          console.log('[FAILSAFE TRIGGERED] Force ending vote after 21 seconds');
+          console.log('[FAILSAFE TRIGGERED] Force ending vote after 31 seconds');
           failVote().catch(e => console.error('[FAILSAFE ERROR]', e));
         }
-      }, 21000);
+      }, 31000);
       
     } catch (error) {
       console.error('[COMMAND ERROR] Vote mute execution failed:', error);
