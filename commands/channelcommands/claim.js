@@ -3,6 +3,7 @@ require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 const Settings = require('../../Settings.js');
 const auditLogger = require('../../methods/auditLogger');
+const { verifyChannelOwnership } = require('../../methods/channelVerification');
 
 module.exports = {
   category: 'channelcommands',
@@ -24,8 +25,10 @@ module.exports = {
       
       const currentChannel = member.voice.channel.id;
       
-      // Check if the channel is a permanent voice channel
-      if (Settings.doesChannelHavePermVoice(guild.id, currentChannel)) {
+      // Check if the channel is a permanent voice channel using the new verification
+      const verification = await verifyChannelOwnership(guild.id, currentChannel, member.id, guild);
+      
+      if (verification.isPermanent) {
         // Only administrators can claim permanent voice channels
         if (!member.permissions.has(PermissionFlagsBits.Administrator)) {
           return interaction.editReply({ 
@@ -35,7 +38,6 @@ module.exports = {
         }
         
         // For administrators, we'll have a different flow to claim permanent channels
-        // This could involve setting permissions directly instead of using channelOwners
         const channel = guild.channels.cache.get(currentChannel);
         
         // Set permissions for the admin as owner
@@ -65,64 +67,79 @@ module.exports = {
         });
       }
       
-      // Regular flow for temporary channels below this point
-      // Check if the channel is a temporary channel
-      if (!channelOwners.has(currentChannel)) {
-        return interaction.editReply({ content: 'You must be in a temporary channel to use this command.', ephemeral: true });
-      }
-      
-      // Get the current owner
-      const currentOwnerId = channelOwners.get(currentChannel);
-      
-      // Check if the user is already the owner
-      if (currentOwnerId === member.id) {
-        return interaction.editReply({ content: 'You are already the owner of this channel.', ephemeral: true });
-      }
-      
-      // Try to fetch the current owner to check if they're still in the server/channel
-      try {
-        const currentOwner = await guild.members.fetch(currentOwnerId);
-        
-        // Check if the current owner is still in the voice channel
-        if (currentOwner.voice.channel && currentOwner.voice.channel.id === currentChannel) {
+      // Both normal temporary channels and recovered channels (post-reboot) will work here
+      if (verification.isTemp || verification.recoveredChannel) {
+        // Check if this is a recovered channel that we're handling post-reboot
+        if (verification.recoveredChannel) {
+          // If this is the first user trying to claim a recovered channel, we already set them as owner
+          // in the verification function, so we can just acknowledge that
           return interaction.editReply({ 
-            content: 'The current owner is still in this channel and must transfer ownership to you.', 
+            content: 'You have been recognized as the owner of this channel after bot restart.', 
             ephemeral: true 
           });
         }
-      } catch (error) {
-        // Owner may have left the server, proceed with claim
-        console.log(`Owner ${currentOwnerId} not found in server, allowing claim`);
+        
+        // Regular flow for temporary channels below this point
+        // Get the current owner
+        const currentOwnerId = channelOwners.get(currentChannel);
+        
+        // Check if the user is already the owner
+        if (currentOwnerId === member.id) {
+          return interaction.editReply({ content: 'You are already the owner of this channel.', ephemeral: true });
+        }
+        
+        // Try to fetch the current owner to check if they're still in the server/channel
+        try {
+          const currentOwner = await guild.members.fetch(currentOwnerId);
+          
+          // Check if the current owner is still in the voice channel
+          if (currentOwner.voice.channel && currentOwner.voice.channel.id === currentChannel) {
+            return interaction.editReply({ 
+              content: 'The current owner is still in this channel and must transfer ownership to you.', 
+              ephemeral: true 
+            });
+          }
+        } catch (error) {
+          // Owner may have left the server, proceed with claim
+          console.log(`Owner ${currentOwnerId} not found in server, allowing claim`);
+        }
+        
+        // Update the channel owner
+        const oldOwnerId = channelOwners.get(currentChannel);
+        channelOwners.set(currentChannel, member.id);
+        
+        // Set permissions for the new owner
+        const channel = guild.channels.cache.get(currentChannel);
+        await channel.permissionOverwrites.edit(member.id, { 
+          Connect: true, 
+          ViewChannel: true, 
+          Speak: true
+        });
+        
+        // Log the ownership change
+        console.log(`Ownership of channel ${currentChannel} transferred from ${oldOwnerId} to ${member.id} via claim command`);
+        
+        // Audit log
+        try {
+          // We may not have the old owner as a user object anymore, so we'll just use their ID
+          const oldOwnerUser = { id: oldOwnerId, username: `Former Owner (${oldOwnerId})` };
+          auditLogger.logOwnershipTransfer(guild.id, channel, oldOwnerUser, member.user);
+        } catch (error) {
+          console.error('Error logging ownership transfer:', error);
+        }
+        
+        return interaction.editReply({ 
+          content: 'You have successfully claimed ownership of this channel.', 
+          ephemeral: true 
+        });
+        
+      } else {
+        // This is not a temp channel or permanent channel in our system
+        return interaction.editReply({ 
+          content: 'This channel does not appear to be a managed voice channel.', 
+          ephemeral: true 
+        });
       }
-      
-      // Update the channel owner
-      const oldOwnerId = channelOwners.get(currentChannel);
-      channelOwners.set(currentChannel, member.id);
-      
-      // Set permissions for the new owner
-      const channel = guild.channels.cache.get(currentChannel);
-      await channel.permissionOverwrites.edit(member.id, { 
-        Connect: true, 
-        ViewChannel: true, 
-        Speak: true
-      });
-      
-      // Log the ownership change
-      console.log(`Ownership of channel ${currentChannel} transferred from ${oldOwnerId} to ${member.id} via claim command`);
-      
-      // Audit log
-      try {
-        // We may not have the old owner as a user object anymore, so we'll just use their ID
-        const oldOwnerUser = { id: oldOwnerId, username: `Former Owner (${oldOwnerId})` };
-        auditLogger.logOwnershipTransfer(guild.id, channel, oldOwnerUser, member.user);
-      } catch (error) {
-        console.error('Error logging ownership transfer:', error);
-      }
-      
-      return interaction.editReply({ 
-        content: 'You have successfully claimed ownership of this channel.', 
-        ephemeral: true 
-      });
       
     } catch (error) {
       console.error('Error in claim command:', error);

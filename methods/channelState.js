@@ -1,4 +1,4 @@
-// methods/channelState.js - Updated to include submods tracking
+// methods/channelState.js - Enhanced for better state recovery
 
 const fs = require('fs');
 const path = require('path');
@@ -13,8 +13,8 @@ const { waitingRoom } = require('./waitingRoom');
 // Import the submods module if it exists
 let channelSubmods;
 try {
-  const submodModule = require('../commands/channelcommands/submod');
-  channelSubmods = submodModule.channelSubmods;
+  const submodManager = require('./submodmanager');
+  channelSubmods = submodManager.channelSubmods;
 } catch (error) {
   // If the module doesn't exist yet, create an empty map
   channelSubmods = new Map();
@@ -23,6 +23,8 @@ try {
 
 // File path for data persistence
 const dataFilePath = path.join(__dirname, '../globalserversettings/channelData.json');
+// Backup file path for extra safety
+const backupFilePath = path.join(__dirname, '../globalserversettings/channelData.backup.json');
 
 // Create directory if it doesn't exist
 const ensureDirExists = () => {
@@ -32,7 +34,7 @@ const ensureDirExists = () => {
   }
 };
 
-// Save all collections to file
+// Save all collections to file with more reliability
 const saveChannelData = () => {
   ensureDirExists();
   
@@ -45,6 +47,7 @@ const saveChannelData = () => {
   }
   
   const data = {
+    timestamp: Date.now(),
     channelOwners: Object.fromEntries(channelOwners),
     togglePrivate: Object.fromEntries(togglePrivate),
     toggleLock: Object.fromEntries(toggleLock),
@@ -52,22 +55,72 @@ const saveChannelData = () => {
     channelSubmods: submodsData
   };
   
-  fs.writeFileSync(dataFilePath, JSON.stringify(data, null, 2), 'utf8');
-  console.log('Channel data saved to file');
+  try {
+    // First save to a temp file
+    const tempFilePath = `${dataFilePath}.temp`;
+    fs.writeFileSync(tempFilePath, JSON.stringify(data, null, 2), 'utf8');
+    
+    // Then replace the main file (atomic operation)
+    fs.renameSync(tempFilePath, dataFilePath);
+    
+    // Make a backup copy every time we save
+    fs.copyFileSync(dataFilePath, backupFilePath);
+    
+    console.log(`Channel data saved to file (${new Date().toISOString()})`);
+  } catch (error) {
+    console.error('Error saving channel data:', error);
+  }
 };
 
 // Create a debounced version to avoid excessive writes
 const debouncedSave = _.debounce(saveChannelData, 5000, { 'maxWait': 30000 });
 
-// Load data from file
+// Force immediate save
+const forceSave = () => {
+  console.log('Forcing immediate save of channel data');
+  debouncedSave.cancel(); // Cancel any pending debounced saves
+  saveChannelData();
+};
+
+// Load data from file with better error handling and backup recovery
 const loadChannelData = () => {
-  if (!fs.existsSync(dataFilePath)) {
+  // Try the main file first
+  let loadedFile = null;
+  let backupUsed = false;
+  
+  try {
+    if (fs.existsSync(dataFilePath)) {
+      loadedFile = fs.readFileSync(dataFilePath, 'utf8');
+      console.log('Channel data file found, loading...');
+    }
+  } catch (error) {
+    console.error('Error reading main channel data file:', error);
+  }
+  
+  // If main file failed, try the backup
+  if (!loadedFile && fs.existsSync(backupFilePath)) {
+    try {
+      loadedFile = fs.readFileSync(backupFilePath, 'utf8');
+      console.log('Using backup channel data file instead');
+      backupUsed = true;
+    } catch (error) {
+      console.error('Error reading backup channel data file:', error);
+    }
+  }
+  
+  if (!loadedFile) {
     console.log('No channel data file found, starting with empty collections');
     return;
   }
   
   try {
-    const data = JSON.parse(fs.readFileSync(dataFilePath, 'utf8'));
+    const data = JSON.parse(loadedFile);
+    
+    // Log when this data was saved
+    if (data.timestamp) {
+      const savedDate = new Date(data.timestamp);
+      console.log(`Loading channel data saved at: ${savedDate.toLocaleString()}`);
+    }
     
     // Load channel owners
     if (data.channelOwners) {
@@ -108,15 +161,21 @@ const loadChannelData = () => {
       });
       console.log(`Loaded ${Object.keys(data.channelSubmods).length} channel submods`);
     }
+    
+    // If we used the backup, immediately save to the main file
+    if (backupUsed) {
+      forceSave();
+    }
   } catch (error) {
-    console.error('Error loading channel data:', error);
+    console.error('Error parsing channel data:', error);
   }
 };
 
-// Method to validate channels (removing ones that no longer exist)
+// Enhanced method to validate channels (to handle post-reboot recovery better)
 const validateChannels = async (client) => {
   let changed = false;
   const validChannelIds = new Set();
+  const activeVoiceChannels = new Set();
   
   // First, collect all valid channel IDs
   try {
@@ -124,12 +183,17 @@ const validateChannels = async (client) => {
     for (const guild of guilds) {
       const channels = await guild.channels.fetch();
       channels.forEach(channel => {
-        if (channel && channel.type === 2) { // Voice channels
+        if (channel) {
           validChannelIds.add(channel.id);
+          
+          // Track voice channels specifically, with users in them
+          if (channel.type === 2 && channel.members.size > 0) { // Voice channels with members
+            activeVoiceChannels.add(channel.id);
+          }
         }
       });
     }
-    console.log(`Found ${validChannelIds.size} valid voice channels`);
+    console.log(`Found ${validChannelIds.size} valid channels, ${activeVoiceChannels.size} active voice channels`);
   } catch (error) {
     console.error('Error fetching channels:', error);
   }
@@ -169,19 +233,20 @@ const validateChannels = async (client) => {
   
   // Save changes if needed
   if (changed) {
-    saveChannelData();
+    forceSave();
   }
   
   console.log('Channel data validation complete');
 };
 
-// Monkey patch the collection methods to automatically save changes
+// Patch the collection methods to automatically save changes
 // This is key to avoiding changes in multiple files
 
-// Original set method
+// Original set method for channelOwners
 const originalOwnerSet = channelOwners.set;
 // Override with method that saves after setting
 channelOwners.set = function(key, value) {
+  console.log(`Setting channel owner: ${key} -> ${value}`);
   const result = originalOwnerSet.call(this, key, value);
   debouncedSave();
   return result;
@@ -191,6 +256,7 @@ channelOwners.set = function(key, value) {
 const originalOwnerDelete = channelOwners.delete;
 // Override with method that saves after deleting
 channelOwners.delete = function(key) {
+  console.log(`Removing channel owner: ${key}`);
   const result = originalOwnerDelete.call(this, key);
   debouncedSave();
   return result;
@@ -258,23 +324,60 @@ if (channelSubmods) {
   };
 }
 
-// Patch process exit handlers to save data
+// Enhanced exit handlers to ensure state is saved
 const setupExitHandlers = () => {
+  // Save on graceful shutdown (SIGINT - Ctrl+C)
   process.on('SIGINT', () => {
-    console.log('Saving channel data before shutdown...');
-    saveChannelData();
-    process.exit(0);
+    console.log('Saving channel data before shutdown (SIGINT)...');
+    forceSave();
+    
+    // Give it a moment to complete the save before exiting
+    setTimeout(() => {
+      process.exit(0);
+    }, 1000);
   });
   
+  // Save on SIGTERM (typical process termination)
   process.on('SIGTERM', () => {
-    console.log('Saving channel data before shutdown...');
-    saveChannelData();
-    process.exit(0);
+    console.log('Saving channel data before shutdown (SIGTERM)...');
+    forceSave();
+    
+    // Give it a moment to complete the save before exiting
+    setTimeout(() => {
+      process.exit(0);
+    }, 1000);
   });
+  
+  // Save on uncaught exceptions
+  process.on('uncaughtException', (error) => {
+    console.error('Uncaught exception:', error);
+    console.log('Saving channel data before possible crash...');
+    forceSave();
+    
+    // Re-throw after a moment to allow the save to complete
+    setTimeout(() => {
+      throw error;
+    }, 1000);
+  });
+  
+  // Save on unhandled promise rejections
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled promise rejection:', reason);
+    console.log('Saving channel data before possible crash...');
+    forceSave();
+  });
+  
+  // Set up an interval save as a fallback
+  const INTERVAL_SAVE_MS = 5 * 60 * 1000; // 5 minutes
+  setInterval(() => {
+    console.log('Performing scheduled state save...');
+    forceSave();
+  }, INTERVAL_SAVE_MS);
 };
 
 module.exports = {
   loadChannelData,
   validateChannels,
-  setupExitHandlers
+  setupExitHandlers,
+  forceSave
 };
