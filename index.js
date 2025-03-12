@@ -482,7 +482,7 @@ if (newState.channelId && newState.channelId === settings.voiceChannelId) {
             const customName = channelNameManager.getCustomChannelName(newState.member.id);
             
             if (customName) {
-                channelName = `${customName} (${newState.member.user.username})`;
+                channelName = `${customName}`;
             }
             
             guild.channels.create({

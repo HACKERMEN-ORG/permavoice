@@ -3,7 +3,7 @@ require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 
 module.exports = {
-  category: 'moderatoronly',
+  category: 'channelcommands',
   data: new SlashCommandBuilder()
     .setName('listrooms')
     .setDescription('Lists all temporary voice channels and their owners.')
