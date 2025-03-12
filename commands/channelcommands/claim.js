@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionsBitField } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 require('dotenv').config();
 const { channelOwners } = require('../../methods/channelowner');
 const Settings = require('../../Settings.js');
@@ -24,11 +24,48 @@ module.exports = {
       
       const currentChannel = member.voice.channel.id;
       
-      // First check if the channel is a permanent voice channel - this is the important check
+      // Check if the channel is a permanent voice channel
       if (Settings.doesChannelHavePermVoice(guild.id, currentChannel)) {
-        return interaction.editReply({ content: 'This is a permanent voice channel and cannot be claimed.', ephemeral: true });
+        // Only administrators can claim permanent voice channels
+        if (!member.permissions.has(PermissionFlagsBits.Administrator)) {
+          return interaction.editReply({ 
+            content: 'This is a permanent voice channel and can only be claimed by administrators.', 
+            ephemeral: true 
+          });
+        }
+        
+        // For administrators, we'll have a different flow to claim permanent channels
+        // This could involve setting permissions directly instead of using channelOwners
+        const channel = guild.channels.cache.get(currentChannel);
+        
+        // Set permissions for the admin as owner
+        await channel.permissionOverwrites.edit(member.id, { 
+          Connect: true, 
+          ViewChannel: true, 
+          Speak: true,
+          MuteMembers: true,
+          DeafenMembers: true,
+          MoveMembers: true
+        });
+        
+        // Log the permanent channel claim
+        auditLogger.log(guild.id, `Permanent voice channel claimed by administrator`, {
+          color: '#9b59b6', // Purple
+          title: 'Permanent Channel Claimed',
+          user: member.user,
+          fields: [
+            { name: 'Channel', value: `${channel.name} (<#${currentChannel}>)`, inline: true },
+            { name: 'Administrator', value: `<@${member.id}>`, inline: true }
+          ]
+        });
+        
+        return interaction.editReply({ 
+          content: 'You have successfully claimed ownership of this permanent voice channel.', 
+          ephemeral: true 
+        });
       }
       
+      // Regular flow for temporary channels below this point
       // Check if the channel is a temporary channel
       if (!channelOwners.has(currentChannel)) {
         return interaction.editReply({ content: 'You must be in a temporary channel to use this command.', ephemeral: true });
@@ -57,12 +94,6 @@ module.exports = {
         // Owner may have left the server, proceed with claim
         console.log(`Owner ${currentOwnerId} not found in server, allowing claim`);
       }
-      
-      // At this point, we know:
-      // 1. The channel is a temporary channel
-      // 2. The channel is NOT a permanent voice channel
-      // 3. The current owner is not in the channel
-      // 4. The user is in the channel
       
       // Update the channel owner
       const oldOwnerId = channelOwners.get(currentChannel);
