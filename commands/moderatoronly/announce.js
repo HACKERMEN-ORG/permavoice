@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 require('dotenv').config();
 
 module.exports = {
@@ -30,6 +30,11 @@ module.exports = {
             option.setName('anonymous')
                 .setDescription('Whether to hide who posted the announcement (default: false)')
                 .setRequired(false))
+        .addChannelOption(option =>
+            option.setName('channel')
+                .setDescription('Channel to send the announcement to (defaults to current channel)')
+                .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+                .setRequired(false))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     
     async execute(interaction) {
@@ -45,8 +50,8 @@ module.exports = {
         await interaction.deferReply({ ephemeral: true });
         
         try {
-            // Get the current channel
-            const channel = interaction.channel;
+            // Get the target channel (either specified or current)
+            const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
             
             // Get announcement details
             const title = interaction.options.getString('title');
@@ -82,10 +87,10 @@ module.exports = {
             }
             
             // Send the announcement
-            await channel.send({ embeds: [embed] });
+            await targetChannel.send({ embeds: [embed] });
             
             return interaction.editReply({
-                content: `Announcement successfully sent${anonymous ? ' anonymously' : ''}.`,
+                content: `Announcement successfully sent to ${targetChannel}${anonymous ? ' anonymously' : ''}.`,
             });
         } catch (error) {
             console.error('Error sending announcement:', error);

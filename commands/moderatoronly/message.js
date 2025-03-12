@@ -1,4 +1,4 @@
-const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, ChannelType } = require('discord.js');
 require('dotenv').config();
 
 module.exports = {
@@ -14,9 +14,10 @@ module.exports = {
             option.setName('anonymous')
                 .setDescription('Whether to hide who posted the message (default: false)')
                 .setRequired(false))
-        .addStringOption(option =>
+        .addChannelOption(option =>
             option.setName('channel')
                 .setDescription('Channel to send the message to (defaults to current channel)')
+                .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
                 .setRequired(false))
         .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
     
@@ -36,25 +37,7 @@ module.exports = {
             // Get message details
             const content = interaction.options.getString('content');
             const anonymous = interaction.options.getBoolean('anonymous') || false;
-            const channelOption = interaction.options.getString('channel');
-            
-            // Determine which channel to send to
-            let targetChannel = interaction.channel;
-            
-            // If a specific channel is mentioned, try to find it
-            if (channelOption) {
-                // Extract channel ID from mention format like <#123456789>
-                const channelId = channelOption.replace(/[<#>]/g, '');
-                const foundChannel = interaction.guild.channels.cache.get(channelId);
-                
-                if (foundChannel) {
-                    targetChannel = foundChannel;
-                } else {
-                    return interaction.editReply({
-                        content: 'I could not find the specified channel. Please use a valid channel mention.',
-                    });
-                }
-            }
+            const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
             
             // Format the message with author prefix if not anonymous
             let messageToSend = content;
