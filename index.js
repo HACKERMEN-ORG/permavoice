@@ -275,7 +275,8 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                     channel.type === ChannelType.GuildVoice && 
                     channel.parentId === settings.category && 
                     !channelOwners.has(channelId) && 
-                    channelId !== settings.voiceChannelId) {
+                    channelId !== settings.voiceChannelId && 
+                    channel.createdTimestamp < (Date.now() - 30000)) { // Only recover channels older than 30 seconds
                     
                     // This channel may have been created before a reboot
                     console.log(`Found untracked voice channel ${channelId} in temp category - post-reboot recovery`);
