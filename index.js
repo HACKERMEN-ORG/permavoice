@@ -304,169 +304,274 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         }
     }
 
-    // Handling mute status when joining a channel
-    if (newState.channelId) {
-        const userId = newState.member.id;
-        const channelId = newState.channelId;
-
-        // Skip all mute processing for channel owners and submods
-        if ((channelOwners.has(channelId) && channelOwners.get(channelId) === userId) || 
-            (submodManager && submodManager.isSubmod && submodManager.isSubmod(channelId, userId))) {
-            // This is the channel owner or a submod - ensure they're always unmuted in their channel
-            if (newState.member.voice.serverMute) {
-                console.log(`Channel owner/submod ${userId} is muted in their channel ${channelId}, unmuting`);
-                try {
-                    newState.member.voice.setMute(false, 'Channel owner/submod unmute')
-                        .catch(error => console.error('Error unmuting channel owner/submod:', error));
-                } catch (error) {
-                    console.error('Error in channel owner/submod unmute:', error);
-                }
-            }
-            return;
+    client.on('voiceStateUpdate', async (oldState, newState) => {
+        // Get bot's guild from server ID
+        const guild = client.guilds.cache.get(serverID);
+      
+        if (!guild) {
+          console.error(`Guild with ID ${serverID} not found. Check your .env SERVERID.`);
+          return;
         }
-
-        // Check if the user was just muted (not muted before, but muted now)
-        const wasJustMuted = oldState.serverMute === false && newState.serverMute === true;
+      
+        // Check if the settings file exists before trying to read it
+        const settingsPath = `./globalserversettings/setupsettings/${serverID}/settings.cfg`;
+        let settings = { category: null, voiceChannelId: null };
         
-        // Check if the user was just unmuted (was muted before, but not muted now)
-        const wasJustUnmuted = oldState.serverMute === true && newState.serverMute === false;
-        
-        // Handle server mutes by admins
-        if (wasJustMuted) {
-            // Add them to our internal mute list to track this server mute
-            // This prevents the bot from automatically unmuting them
-            addMutedUser(channelId, userId);
-            console.log(`User ${userId} was server muted in channel ${channelId}, adding to mute list`);
-            return;
-        }
-        
-        // Handle server unmutes by admins
-        if (wasJustUnmuted) {
-            // Remove them from our internal mute list when they get server unmuted
-            // This ensures the bot won't re-mute them
-            removeMutedUser(channelId, userId);
-            console.log(`User ${userId} was server unmuted in channel ${channelId}, removing from mute list`);
-            return;
-        }
-        
-        // Normal mute handling for non-admin mutes
-        const shouldBeMuted = isUserMuted(channelId, userId);
-
-        // Apply correct mute state
-        if (shouldBeMuted && !newState.member.voice.serverMute) {
-            // Should be muted but isn't
-            console.log(`User ${userId} should be muted in channel ${channelId}, applying mute`);
-            try {
-                newState.member.voice.setMute(true, 'Channel mute applied')
-                    .catch(error => console.error('Error applying channel mute:', error));
-            } catch (error) {
-                console.error('Error applying mute:', error);
-            }
-        } else if (!shouldBeMuted && newState.member.voice.serverMute) {
-            // Shouldn't be muted but is - this handles users moving between channels
-            // IMPORTANT: Check if this might be an admin-applied mute before unmuting
-            try {
-                // Try to get audit logs to check if this was an admin mute
-                guild.fetchAuditLogs({
-                    type: 24, // SERVER_MEMBER_UPDATE
-                    limit: 1
-                }).then(auditLogs => {
-                    const recentMute = auditLogs.entries.first();
-                    // Check if this is a recent mute action (within the last 5 seconds)
-                    const isRecentAction = recentMute && 
-                        (Date.now() - recentMute.createdTimestamp < 5000) && 
-                        recentMute.target.id === userId;
-                        
-                    if (isRecentAction) {
-                        // This was likely an admin mute, add to our tracked mutes
-                        addMutedUser(channelId, userId);
-                        console.log(`Recent admin mute detected for ${userId}, respecting it`);
-                    } else {
-                        // Not an admin mute or not recent, proceed with unmute
-                        console.log(`User ${userId} is incorrectly muted in channel ${channelId}, unmuting`);
-                        newState.member.voice.setMute(false, 'Removing incorrect mute')
-                            .catch(error => console.error('Error removing incorrect mute:', error));
-                    }
-                }).catch(error => {
-                    console.error('Error fetching audit logs:', error);
-                    // If we can't check audit logs, err on the side of respecting the mute
-                    addMutedUser(channelId, userId);
-                });
-            } catch (error) {
-                console.error('Error in mute verification:', error);
-            }
-        }
-    }
-
-    // When a user leaves a channel
-    if (oldState.channelId && (!newState.channelId || oldState.channelId !== newState.channelId)) {
-        const userId = oldState.member.id;
-        const oldChannelId = oldState.channelId;
-
-        // Check if the user was muted in the channel they just left
-        if (isUserMuted(oldChannelId, userId) && oldState.member.voice.serverMute) {
-            // If they're disconnecting entirely or moving to a channel where they shouldn't be muted
-            if (!newState.channelId || !isUserMuted(newState.channelId, userId)) {
-                console.log(`User ${userId} left muted channel ${oldChannelId}, removing mute`);
-                try {
-                    // Important: we need to ensure they're not muted when they join another channel
-                    newState.member.voice.setMute(false, 'Left muted channel')
-                        .catch(error => {
-                            // They may have disconnected entirely, which is fine
-                            if (!error.message.includes('not connected to voice')) {
-                                console.error('Error removing mute on leave:', error);
-                            }
-                        });
-                } catch (error) {
-                    // Only log real errors, not disconnection issues
-                    if (error.message && !error.message.includes('not connected to voice')) {
-                        console.error('Error in mute removal:', error);
-                    }
-                }
-            }
-        }
-    }
-
-    // Handle joining the waiting room
-    if (newState.channelId && Array.from(waitingRoom.values()).includes(newState.channelId)) {
         try {
+          if (fs.existsSync(settingsPath)) {
+            settings = readSettingsFile();
+          }
+        } catch (error) {
+          console.error('Error reading settings file:', error);
+        }
+      
+        // Post-reboot recovery: Check for voice channels that should be in our system
+        // This runs when a user does something in a voice channel (join/leave/move)
+        if ((oldState.channelId || newState.channelId) && settings.category) {
+          const channelId = newState.channelId || oldState.channelId;
+          if (channelId) {
+            try {
+              const channel = await guild.channels.fetch(channelId).catch(() => null);
+              
+              // If this is a voice channel in our temp category but not in our records
+              if (channel && 
+                  channel.type === ChannelType.GuildVoice && 
+                  channel.parentId === settings.category && 
+                  !channelOwners.has(channelId) && 
+                  channelId !== settings.voiceChannelId && 
+                  channel.createdTimestamp < (Date.now() - 30000)) { // Only recover channels older than 30 seconds
+                  
+                  // This channel may have been created before a reboot
+                  console.log(`Found untracked voice channel ${channelId} in temp category - post-reboot recovery`);
+                  
+                  // Check if it has members
+                  if (channel.members.size > 0) {
+                    const firstMember = channel.members.first();
+                    console.log(`Recovering ownership: Setting ${firstMember.id} as owner of ${channelId}`);
+                    
+                    // Assign the first member as the owner (best guess)
+                    channelOwners.set(channelId, firstMember.id);
+                    togglePrivate.set(channelId, 0);
+                    toggleLock.set(channelId, 0);
+                    
+                    // Announce recovery in the channel
+                    channel.send("⚠️ The bot has been restarted. Channel ownership has been restored to the first member. If this is incorrect, any member can use the `/claim` command to take ownership.").catch(console.error);
+                    
+                    // Force save the recovered state
+                    channelState.forceSave();
+                  }
+              }
+            } catch (error) {
+              console.error(`Error in post-reboot channel recovery for ${channelId}:`, error);
+            }
+          }
+        }
+      
+        // ===== MUTE HANDLING SECTION =====
+        // Handling mute status changes
+        const userId = newState.member?.id;
+        const oldChannelId = oldState.channelId;
+        const newChannelId = newState.channelId;
+        
+        // Skip processing if user ID is missing
+        if (!userId) return;
+      
+        // CASE 1: User was server muted (either by right-click or command)
+        const wasJustMuted = oldState.serverMute === false && newState.serverMute === true;
+        if (wasJustMuted && newChannelId) {
+          console.log(`User ${userId} was server muted in channel ${newChannelId}`);
+          
+          // Skip if this is the channel owner or a submoderator
+          if ((channelOwners.has(newChannelId) && channelOwners.get(newChannelId) === userId) || 
+              (submodManager && submodManager.isSubmod && submodManager.isSubmod(newChannelId, userId))) {
+            console.log(`Preventing mute of channel owner/submod ${userId}`);
+            
+            // Unmute them immediately to prevent owners/submods from being muted
+            try {
+              await newState.setMute(false, 'Channel owner/submod protection');
+            } catch (error) {
+              console.error('Error unmuting protected user:', error);
+            }
+            return;
+          }
+          
+          // This is right-click mute from a user or admin, track it in our system
+          addMutedUser(newChannelId, userId);
+          
+          // Try to determine who performed the mute action
+          try {
+            guild.fetchAuditLogs({
+              type: 24, // SERVER_MEMBER_UPDATE
+              limit: 1
+            }).then(async auditLogs => {
+              const recentAction = auditLogs.entries.first();
+              
+              // Check if this is a recent mute action (within the last 3 seconds)
+              if (recentAction && 
+                  (Date.now() - recentAction.createdTimestamp < 3000) && 
+                  recentAction.target.id === userId) {
+                
+                // Get the executor of the mute action
+                const executorId = recentAction.executor.id;
+                const executor = await guild.members.fetch(executorId).catch(() => null);
+                
+                if (executor) {
+                  // Check if executor is channel owner or submod
+                  const isOwner = channelOwners.get(newChannelId) === executorId;
+                  const isSubmod = submodManager && submodManager.isSubmod && 
+                                 submodManager.isSubmod(newChannelId, executorId);
+                  
+                  // If neither owner nor submod, check if they have server admin permissions
+                  if (!isOwner && !isSubmod && !executor.permissions.has(PermissionFlagsBits.Administrator)) {
+                    // This person shouldn't be able to mute others, undo the mute
+                    console.log(`Unauthorized mute by ${executorId}, undoing`);
+                    newState.setMute(false, 'Unauthorized mute action');
+                    removeMutedUser(newChannelId, userId);
+                    return;
+                  }
+                  
+                  // Log the mute action using our existing system
+                  const channel = guild.channels.cache.get(newChannelId);
+                  if (channel) {
+                    auditLogger.logUserMute(guild.id, channel, newState.member.user, executor.user);
+                  }
+                }
+              }
+            }).catch(error => {
+              console.error('Error fetching audit logs for mute:', error);
+            });
+          } catch (error) {
+            console.error('Error processing right-click mute:', error);
+          }
+        }
+        
+        // CASE 2: User was server unmuted (either by right-click or command)
+        const wasJustUnmuted = oldState.serverMute === true && newState.serverMute === false;
+        if (wasJustUnmuted && newChannelId) {
+          console.log(`User ${userId} was server unmuted in channel ${newChannelId}`);
+          
+          // This is right-click unmute, update our tracking
+          removeMutedUser(newChannelId, userId);
+          
+          // Try to determine who performed the unmute action
+          try {
+            guild.fetchAuditLogs({
+              type: 24, // SERVER_MEMBER_UPDATE
+              limit: 1
+            }).then(async auditLogs => {
+              const recentAction = auditLogs.entries.first();
+              
+              // Check if this is a recent unmute action (within the last 3 seconds)
+              if (recentAction && 
+                  (Date.now() - recentAction.createdTimestamp < 3000) && 
+                  recentAction.target.id === userId) {
+                
+                // Get the executor of the unmute action
+                const executorId = recentAction.executor.id;
+                const executor = await guild.members.fetch(executorId).catch(() => null);
+                
+                if (executor) {
+                  // Check if executor is channel owner or submod
+                  const isOwner = channelOwners.get(newChannelId) === executorId;
+                  const isSubmod = submodManager && submodManager.isSubmod && 
+                                 submodManager.isSubmod(newChannelId, executorId);
+                  
+                  // If neither owner nor submod, check if they have server admin permissions
+                  if (!isOwner && !isSubmod && !executor.permissions.has(PermissionFlagsBits.Administrator)) {
+                    // This person shouldn't be able to unmute others, redo the mute if needed
+                    console.log(`Unauthorized unmute by ${executorId}, redoing`);
+                    if (isUserMuted(newChannelId, userId)) {
+                      newState.setMute(true, 'Enforcing authorized mute');
+                    }
+                    return;
+                  }
+                  
+                  // Log the unmute action using our existing system
+                  const channel = guild.channels.cache.get(newChannelId);
+                  if (channel) {
+                    auditLogger.logUserUnmute(guild.id, channel, newState.member.user, executor.user);
+                  }
+                }
+              }
+            }).catch(error => {
+              console.error('Error fetching audit logs for unmute:', error);
+            });
+          } catch (error) {
+            console.error('Error processing right-click unmute:', error);
+          }
+        }
+        
+        // CASE 3: User joins a channel where they should be muted
+        if ((!oldChannelId || oldChannelId !== newChannelId) && newChannelId) {
+          // Check if user should be muted in this channel
+          if (isUserMuted(newChannelId, userId) && !newState.serverMute) {
+            console.log(`User ${userId} should be muted in channel ${newChannelId}, applying mute`);
+            try {
+              await newState.setMute(true, 'Enforcing channel mute');
+            } catch (error) {
+              console.error('Error applying mute on channel join:', error);
+            }
+          }
+        }
+        
+        // CASE 4: User leaves a channel where they were muted
+        if (oldChannelId && (!newChannelId || oldChannelId !== newChannelId)) {
+          // If they were muted in the old channel, unmute them when leaving
+          if (isUserMuted(oldChannelId, userId) && oldState.serverMute) {
+            console.log(`User ${userId} left muted channel ${oldChannelId}, removing mute`);
+            try {
+              // Important: remove the server mute when they leave the channel
+              await newState.setMute(false, 'Left muted channel');
+            } catch (error) {
+              // Only log real errors, not disconnection issues
+              if (error && error.message && !error.message.includes('not connected to voice')) {
+                console.error('Error in mute removal on leave:', error);
+              }
+            }
+          }
+        }
+        // ===== END MUTE HANDLING SECTION =====
+      
+        // Handle joining the waiting room
+        if (newState.channelId && Array.from(waitingRoom.values()).includes(newState.channelId)) {
+          try {
             // Find the channel id that the waiting room belongs to
             const ownerChannelId = getByValue(waitingRoom, newState.channelId);
             if (!ownerChannelId) {
-                console.error(`Owner channel not found for waiting room ${newState.channelId}`);
-                return;
+              console.error(`Owner channel not found for waiting room ${newState.channelId}`);
+              return;
             }
-
+      
             // Try to get the owner channel
             const ownerChannel = guild.channels.cache.get(ownerChannelId);
             if (!ownerChannel) {
-                console.error(`Owner channel ${ownerChannelId} not found in cache`);
-                return;
+              console.error(`Owner channel ${ownerChannelId} not found in cache`);
+              return;
             }
-
+      
             // Get the owner of the channel
             const ownerId = channelOwners.get(ownerChannelId);
             if (!ownerId) {
-                console.error(`Owner not found for channel ${ownerChannelId}`);
-                return;
+              console.error(`Owner not found for channel ${ownerChannelId}`);
+              return;
             }
-
+      
             // If the owner is the one who joined the waiting room, ignore it
             if (newState.member.id === ownerId) {
-                return;
+              return;
             }
-
+      
             // Send a message in the main temp channel and notify the owner by id
             ownerChannel.send(`<@${ownerId}>: **${newState.member.user.username}** has joined the waiting room. You may **/trust** them to join the channel.`);
-        } catch (error) {
+          } catch (error) {
             console.error("Error handling waiting room join:", error);
+          }
+          return;
         }
-        return;
-    }
-
-      // Handle joining the create channel
-      if (newState.channelId && newState.channelId === settings.voiceChannelId) {
-        try {
+      
+        // Handle joining the create channel
+        if (newState.channelId && newState.channelId === settings.voiceChannelId) {
+          try {
             // Get the user who joined
             const member = newState.member;
             
@@ -475,20 +580,20 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             const customName = channelNameManager.getCustomChannelName(member.id);
             
             if (customName) {
-                channelName = customName;
+              channelName = customName;
             } else if (member.nickname) {
-                // Use server nickname if available
-                channelName = `${member.nickname}'s channel`;
+              // Use server nickname if available
+              channelName = `${member.nickname}'s channel`;
             } else {
-                // Fall back to username if no nickname is set
-                channelName = `${member.user.username}'s channel`;
+              // Fall back to username if no nickname is set
+              channelName = `${member.user.username}'s channel`;
             }
             
             // Create the channel in the same category
             const createdChannel = await guild.channels.create({
-                name: channelName,
-                type: ChannelType.GuildVoice,
-                parent: settings.category
+              name: channelName,
+              type: ChannelType.GuildVoice,
+              parent: settings.category
             });
             
             // Move the member to the new channel
@@ -502,133 +607,133 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             console.log(`Created new voice channel: ${channelName} (${createdChannel.id}) for ${member.user.username}`);
             
             try {
-                const welcomeEmbed = createWelcomeEmbed();
-                await createdChannel.send({ 
-                  //content: `<@${member.id}> Welcome to your new voice channel!`,
-                  embeds: [welcomeEmbed] 
-                });
-                console.log(`Sent welcome message to new channel: ${createdChannel.name} (${createdChannel.id})`);
-              } catch (error) {
-                console.error(`Error sending welcome message to channel ${createdChannel.id}:`, error);
-              }
-
+              const welcomeEmbed = createWelcomeEmbed();
+              await createdChannel.send({ 
+                //content: `<@${member.id}> Welcome to your new voice channel!`,
+                embeds: [welcomeEmbed] 
+              });
+              console.log(`Sent welcome message to new channel: ${createdChannel.name} (${createdChannel.id})`);
+            } catch (error) {
+              console.error(`Error sending welcome message to channel ${createdChannel.id}:`, error);
+            }
+      
             // Log the channel creation
             auditLogger.logChannelCreation(guild.id, createdChannel, member.user);
             
             // If this user owns permanent voice channels, track this temp channel for them
             const ownedPermRooms = Array.from(guild.channels.cache.values())
-                .filter(channel => 
-                    channel.type === ChannelType.GuildVoice && 
-                    Settings.doesChannelHavePermVoice(guild.id, channel.id)
-                )
-                .filter(channel => {
-                    const userPerms = channel.permissionOverwrites.cache.get(member.id);
-                    return userPerms && 
-                           userPerms.allow.has(PermissionFlagsBits.Connect) &&
-                           userPerms.allow.has(PermissionFlagsBits.Speak);
-                });
-                
+              .filter(channel => 
+                channel.type === ChannelType.GuildVoice && 
+                Settings.doesChannelHavePermVoice(guild.id, channel.id)
+              )
+              .filter(channel => {
+                const userPerms = channel.permissionOverwrites.cache.get(member.id);
+                return userPerms && 
+                       userPerms.allow.has(PermissionFlagsBits.Connect) &&
+                       userPerms.allow.has(PermissionFlagsBits.Speak);
+              });
+                  
             if (ownedPermRooms.length > 0) {
-                permanentOwnerManager.setTempChannelForPermanentOwner(member.id, createdChannel.id);
-                console.log(`User ${member.id} owns permanent rooms, tracking temp channel ${createdChannel.id}`);
+              permanentOwnerManager.setTempChannelForPermanentOwner(member.id, createdChannel.id);
+              console.log(`User ${member.id} owns permanent rooms, tracking temp channel ${createdChannel.id}`);
             }
-        } catch (error) {
+          } catch (error) {
             console.error("Error creating voice channel:", error);
+          }
         }
-    }
-
-    // Handle the channel deletion if the channel is empty
-    if (oldState.channelId) {
-        try {
+      
+        // Handle the channel deletion if the channel is empty
+        if (oldState.channelId) {
+          try {
             // First verify the channel still exists using cache
             const oldChannel = guild.channels.cache.get(oldState.channelId);
             if (!oldChannel) {
-                // Channel already doesn't exist, nothing to do
-                return;
+              // Channel already doesn't exist, nothing to do
+              return;
             }
-
+      
             // Check if this is a waiting room
             if (Array.from(waitingRoom.values()).includes(oldChannel.id)) {
-                return;
+              return;
             }
-
+      
             // Check if this channel has a waiting room
             if (waitingRoom.has(oldChannel.id)) {
-                // Check the parent channel conditions
-                if (oldChannel.parentId === settings.category &&
-                    oldChannel.members.size === 0 &&
-                    oldChannel.id !== settings.voiceChannelId) {
-
-                    // Get the associated waiting room
-                    const waitingRoomId = waitingRoom.get(oldChannel.id);
-                    if (waitingRoomId) {
-                        const waitingRoomChannel = guild.channels.cache.get(waitingRoomId);
-                        if (waitingRoomChannel) {
-                            waitingRoomChannel.delete()
-                                .catch(error => console.error('Error deleting waiting room channel:', error));
-                        }
-                    }
-
-                    // Clean up
-                    waitingRoom.delete(oldChannel.id);
-                    channelOwners.delete(oldChannel.id);
-                    clearChannelMutes(oldChannel.id);
-                    
-                    // Clear submods data
-                    if (submodManager && typeof submodManager.clearChannelSubmods === 'function') {
-                        submodManager.clearChannelSubmods(oldChannel.id);
-                    }
-                    
-                    // Check if the deleted channel was owned by a permanent room owner
-                    const permanentOwnerId = permanentOwnerManager.getPermanentOwnerForTempChannel(oldChannel.id);
-                    if (permanentOwnerId) {
-                        console.log(`Removing permanent owner ${permanentOwnerId}'s temp channel mapping for deleted channel ${oldChannel.id}`);
-                        permanentOwnerManager.removeTempChannelForPermanentOwner(permanentOwnerId);
-                    }
-
-                    // Delete the channel
-                    oldChannel.delete()
-                        .catch(error => console.error('Error deleting main channel with waiting room:', error));
+              // Check the parent channel conditions
+              if (oldChannel.parentId === settings.category &&
+                  oldChannel.members.size === 0 &&
+                  oldChannel.id !== settings.voiceChannelId) {
+      
+                // Get the associated waiting room
+                const waitingRoomId = waitingRoom.get(oldChannel.id);
+                if (waitingRoomId) {
+                  const waitingRoomChannel = guild.channels.cache.get(waitingRoomId);
+                  if (waitingRoomChannel) {
+                    waitingRoomChannel.delete()
+                      .catch(error => console.error('Error deleting waiting room channel:', error));
+                  }
                 }
-                return;
-            }
-
-            // If the channel is a perm channel, ignore it
-            if (Settings.doesChannelHavePermVoice(serverID, oldChannel.id)) {
-                return;
-            }
-
-            // If a voice channel is in our category, is empty, and isn't the create channel, delete it
-            if (oldChannel.parentId === settings.category &&
-                oldChannel.members.size === 0 &&
-                oldChannel.id !== settings.voiceChannelId) {
-
+      
                 // Clean up
+                waitingRoom.delete(oldChannel.id);
                 channelOwners.delete(oldChannel.id);
                 clearChannelMutes(oldChannel.id);
                 
                 // Clear submods data
                 if (submodManager && typeof submodManager.clearChannelSubmods === 'function') {
-                    submodManager.clearChannelSubmods(oldChannel.id);
+                  submodManager.clearChannelSubmods(oldChannel.id);
                 }
                 
                 // Check if the deleted channel was owned by a permanent room owner
                 const permanentOwnerId = permanentOwnerManager.getPermanentOwnerForTempChannel(oldChannel.id);
                 if (permanentOwnerId) {
-                    console.log(`Removing permanent owner ${permanentOwnerId}'s temp channel mapping for deleted channel ${oldChannel.id}`);
-                    permanentOwnerManager.removeTempChannelForPermanentOwner(permanentOwnerId);
+                  console.log(`Removing permanent owner ${permanentOwnerId}'s temp channel mapping for deleted channel ${oldChannel.id}`);
+                  permanentOwnerManager.removeTempChannelForPermanentOwner(permanentOwnerId);
                 }
-
+      
                 // Delete the channel
                 oldChannel.delete()
-                    .then(() => console.log(`Deleted empty channel: ${oldChannel.name}`))
-                    .catch(error => console.warn('Error deleting main channel:', error));
+                  .catch(error => console.error('Error deleting main channel with waiting room:', error));
+              }
+              return;
             }
-        } catch (error) {
+      
+            // If the channel is a perm channel, ignore it
+            if (Settings.doesChannelHavePermVoice(serverID, oldChannel.id)) {
+              return;
+            }
+      
+            // If a voice channel is in our category, is empty, and isn't the create channel, delete it
+            if (oldChannel.parentId === settings.category &&
+                oldChannel.members.size === 0 &&
+                oldChannel.id !== settings.voiceChannelId) {
+      
+              // Clean up
+              channelOwners.delete(oldChannel.id);
+              clearChannelMutes(oldChannel.id);
+              
+              // Clear submods data
+              if (submodManager && typeof submodManager.clearChannelSubmods === 'function') {
+                submodManager.clearChannelSubmods(oldChannel.id);
+              }
+              
+              // Check if the deleted channel was owned by a permanent room owner
+              const permanentOwnerId = permanentOwnerManager.getPermanentOwnerForTempChannel(oldChannel.id);
+              if (permanentOwnerId) {
+                console.log(`Removing permanent owner ${permanentOwnerId}'s temp channel mapping for deleted channel ${oldChannel.id}`);
+                permanentOwnerManager.removeTempChannelForPermanentOwner(permanentOwnerId);
+              }
+      
+              // Delete the channel
+              oldChannel.delete()
+                .then(() => console.log(`Deleted empty channel: ${oldChannel.name}`))
+                .catch(error => console.warn('Error deleting main channel:', error));
+            }
+          } catch (error) {
             console.error("Error handling channel deletion:", error);
+          }
         }
-    }
-});
+      });
 
 client.on(Events.InteractionCreate, async interaction => {
     if (!interaction.isChatInputCommand()) return;
