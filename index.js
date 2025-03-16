@@ -471,10 +471,17 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             const member = newState.member;
             
             // Get the channel name - either custom or default
-            let channelName = `${member.user.username}'s channel`;
+            let channelName;
             const customName = channelNameManager.getCustomChannelName(member.id);
+            
             if (customName) {
                 channelName = customName;
+            } else if (member.nickname) {
+                // Use server nickname if available
+                channelName = `${member.nickname}'s channel`;
+            } else {
+                // Fall back to username if no nickname is set
+                channelName = `${member.user.username}'s channel`;
             }
             
             // Create the channel in the same category
@@ -497,7 +504,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             try {
                 const welcomeEmbed = createWelcomeEmbed();
                 await createdChannel.send({ 
-                  content: `<@${member.id}> Welcome to your new voice channel!`,
+                  //content: `<@${member.id}> Welcome to your new voice channel!`,
                   embeds: [welcomeEmbed] 
                 });
                 console.log(`Sent welcome message to new channel: ${createdChannel.name} (${createdChannel.id})`);
